@@ -113,6 +113,10 @@ if (-not $openbbUp) {
     Write-Warning "The agent can still research with Vibe-Trading's own data tools, but without OpenBB's."
 }
 
+# Picks up a changed skill after a git pull; Vibe-Trading reads skills per run.
+& $TgDesk skills
+if ($LASTEXITCODE -ne 0) { Write-Warning "Could not refresh the Trading God skill. Run this later: $TgDesk setup" }
+
 if ($vibeUp) {
     & $TgDesk schedule
     if ($LASTEXITCODE -ne 0) { Write-Warning "Could not register the pre-market scan. Run this later: $TgDesk schedule" }

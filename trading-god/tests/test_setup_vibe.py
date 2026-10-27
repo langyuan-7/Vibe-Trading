@@ -10,6 +10,7 @@ from trading_god.setup_vibe import (
     configure,
     env_updates,
     runnable_claude,
+    install_own_skills,
     install_skills,
     mcp_servers,
     merge_agent_config,
@@ -129,6 +130,17 @@ def test_install_skills_replaces_only_what_it_manages(tmp_path, investorskills):
     assert (mine / "SKILL.md").exists()
     assert "## Investment system" in (user_skills / "demo-playbook" / "SKILL.md").read_text(encoding="utf-8")
     assert install_skills(user_skills, ["demo-playbook"], investorskills) == installed
+
+
+def test_refreshing_own_skills_keeps_the_playbooks(tmp_path, investorskills):
+    user_skills = tmp_path / "skills" / "user"
+    install_skills(user_skills, ["demo-playbook"], investorskills)
+    desk_skill = user_skills / "trading-god-desk" / "SKILL.md"
+    desk_skill.write_text("stale", encoding="utf-8")
+
+    assert install_own_skills(user_skills) == ["trading-god-desk"]
+    assert desk_skill.read_text(encoding="utf-8") != "stale"
+    assert (user_skills / "demo-playbook" / "SKILL.md").exists()
 
 
 def test_install_skills_will_not_overwrite_a_folder_it_did_not_create(tmp_path, investorskills):
