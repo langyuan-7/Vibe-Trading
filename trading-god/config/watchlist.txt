@@ -1,0 +1,12 @@
+# Tickers the pre-market scan looks at. One per line or comma separated.
+# Setup copies this file to %USERPROFILE%\.trading-god\watchlist.txt once; edit
+# that copy. start.ps1 re-registers the scan with the current list.
+#
+# A starting set of large, liquid US names across sectors, plus the two index
+# ETFs the scan uses to read the market's direction.
+SPY, QQQ
+AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO
+JPM, V, MA
+LLY, UNH, ABBV
+COST, WMT, HD
+XOM, CAT, GE

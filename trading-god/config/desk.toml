@@ -1,0 +1,44 @@
+# Trading God desk settings.
+#
+# Setup copies this file to %USERPROFILE%\.trading-god\desk.toml once. Edit that
+# copy, not this one, then restart the desk (close its window and run start.ps1).
+
+[moomoo]
+host = "127.0.0.1"        # where moomoo OpenD runs
+port = 11111              # OpenD's API port (the default)
+security_firm = "FUTUINC" # moomoo US. Other regions: FUTUSG, FUTUAU, FUTUCA, FUTUJP, FUTUMY
+market = "US"
+acc_id = 0                # 0 = use the first US paper stock account OpenD reports
+
+[risk]
+# Hard limits. Every proposal is checked when the agent makes it, and again
+# against the live account when you approve it. Percentages are of equity.
+max_order_pct = 5.0         # one buy order: at most 5% of equity ($50,000 on $1M)
+max_position_pct = 10.0     # one stock after a buy: at most 10% of equity
+max_invested_pct = 90.0     # all stocks after a buy: at most 90% (keeps 10% cash)
+max_buys_per_day = 5        # buy orders placed per US trading day (sells are never capped)
+max_pending = 10            # proposals waiting for you at the same time
+min_price = 5.0             # no buying stocks under $5
+max_limit_deviation_pct = 15.0  # a limit price more than 15% from the last price is refused
+allow_market_orders = true
+market_order_buffer_pct = 1.0   # market buys are sized at last price + 1%
+blocked_symbols = []        # e.g. ["GME", "AMC"]
+
+[proposals]
+ttl_hours = 12              # an undecided proposal expires after this many hours
+
+[web]
+host = "127.0.0.1"          # the desk page is for this computer only
+port = 8765
+
+[telegram]
+# Optional: get a phone message when a proposal is waiting. Create a bot with
+# @BotFather, send it a message, then put its token and your chat id here.
+bot_token = ""
+chat_id = ""
+
+[schedule]
+vibe_url = "http://127.0.0.1:8899"
+cron = "35 8 * * 1-5"       # 8:35 a.m. New York time, Monday to Friday
+timezone = "America/New_York"
+max_proposals_per_run = 3
