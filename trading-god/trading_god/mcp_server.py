@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import sys
 from typing import Annotated, Any, Callable, Literal
 
@@ -124,6 +125,20 @@ def withdraw_proposal(
     return _safely(lambda: _get_desk().withdraw(proposal_id, reason))
 
 
+def _private_stdin() -> io.TextIOWrapper:
+    """Read the protocol from a copy of stdin and point stdin itself at the null device.
+
+    On Windows, loading a DLL (numpy's, which the futu SDK imports) queries the
+    standard handles, and that query waits behind the server's blocking read on
+    the stdin pipe. The first tool call that imports one would hang for good.
+    """
+    pipe = os.dup(0)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    return io.TextIOWrapper(os.fdopen(pipe, "rb"), encoding="utf-8", errors="replace")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
 
@@ -132,11 +147,15 @@ def main() -> None:
 
     # The protocol keeps the real stdout; anything else that prints (the futu
     # SDK can) goes to stderr instead of corrupting the JSON-RPC stream.
-    protocol = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    protocol_in = _private_stdin()
+    protocol_out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stdout = sys.stderr
 
     async def serve() -> None:
-        async with stdio_server(stdout=anyio.wrap_file(protocol)) as (read_stream, write_stream):
+        async with stdio_server(stdin=anyio.wrap_file(protocol_in), stdout=anyio.wrap_file(protocol_out)) as (
+            read_stream,
+            write_stream,
+        ):
             low_level = server._mcp_server
             await low_level.run(read_stream, write_stream, low_level.create_initialization_options())
 
