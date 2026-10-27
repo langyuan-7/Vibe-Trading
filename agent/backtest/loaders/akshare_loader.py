@@ -80,9 +80,13 @@ def _is_forex(code: str) -> bool:
     # chain (mt5 → akshare) actually engages for project-style codes.
     upper = code.upper().removesuffix(".FX").replace("/", "")
     try:
-        from akshare.forex.cons import symbol_market_map
+        # akshare 1.20 moved the forex constants from akshare.forex.cons.
+        from akshare.fx.cons_forex import symbol_market_map
     except Exception:
-        return False
+        try:
+            from akshare.forex.cons import symbol_market_map
+        except Exception:
+            return False
     return upper in symbol_market_map
 
 
