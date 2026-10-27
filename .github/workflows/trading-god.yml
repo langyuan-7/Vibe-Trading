@@ -1,0 +1,63 @@
+name: Trading God
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "trading-god/**"
+      - ".github/workflows/trading-god.yml"
+  pull_request:
+    paths:
+      - "trading-god/**"
+      - ".github/workflows/trading-god.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Trading God / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            runner: windows-2025
+          - name: Linux
+            runner: ubuntu-24.04
+
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # The same three steps install.ps1 takes: the hash-locked set, Vibe-Trading
+      # without re-resolving it, then the desk with the moomoo SDK.
+      - name: Install
+        run: |
+          python -m pip install --require-hashes -r requirements-lock.txt
+          python -m pip install --no-deps -e .
+          python -m pip install -e "trading-god[test]"
+
+      - name: Parse the setup scripts with Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem trading-god\setup\*.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "$($file.Name):$($e.Extent.StartLineNumber): $($e.Message)"; $failed = $true }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Test
+        run: python -m pytest trading-god/tests -q

@@ -1,0 +1,12 @@
+# Investor playbooks imported from github.com/langyuan-7/investorskills.
+# Each one becomes a Vibe-Trading skill the agent can load. Keep the list short:
+# every playbook's one-line description goes into every prompt.
+#
+# Market regime: when to be aggressive and when to sit out.
+marks-cycles
+# Entry setups for stocks in uptrends (days to weeks).
+oneil-canslim
+minervini-vcp
+# Business quality checks for longer holds (months to years).
+buffett
+lynch-growth
