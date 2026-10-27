@@ -2,6 +2,9 @@
 .SYNOPSIS
     Stop the Trading God services that start.ps1 started. moomoo OpenD is left running.
 #>
+[CmdletBinding()]
+param()
+
 $ports = [ordered]@{ "Vibe-Trading" = 8899; "Approval desk" = 8765; "OpenBB data server" = 8001 }
 
 foreach ($name in $ports.Keys) {

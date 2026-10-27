@@ -4,7 +4,8 @@
     Vibe-Trading, then register the daily pre-market scan.
 
 .DESCRIPTION
-    Start moomoo OpenD and log in first. Then run:
+    If moomoo OpenD is not running, this starts it from its Start menu or desktop
+    shortcut and waits for you to log in. Then run:
 
         powershell -ExecutionPolicy Bypass -File trading-god\setup\start.ps1
 
@@ -74,10 +75,33 @@ if (-not (Test-Path $TgDesk)) {
     throw "Trading God is not installed yet. Run install.ps1 in this folder first."
 }
 
+function Find-OpenD {
+    # The moomoo OpenD installer leaves a shortcut; a portable copy may have one on the desktop.
+    $folders = @("Programs", "CommonPrograms", "Desktop", "CommonDesktopDirectory") |
+        ForEach-Object { [Environment]::GetFolderPath($_) } | Where-Object { $_ -and (Test-Path $_) }
+    foreach ($folder in $folders) {
+        $link = Get-ChildItem $folder -Recurse -Depth 3 -Filter "*.lnk" -ErrorAction SilentlyContinue |
+            Where-Object { $_.BaseName -match "OpenD" -and $_.BaseName -notmatch "uninstall" } | Select-Object -First 1
+        if ($link) { return $link.FullName }
+    }
+    return $null
+}
+
 if (Test-Port $OpenDPort) {
     Write-Host "moomoo OpenD: running" -ForegroundColor Green
 } else {
-    Write-Warning "moomoo OpenD is not answering on port $OpenDPort. Start it and log in; the desk shows an error until then."
+    $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "OpenD" }
+    $openD = if ($running) { $null } else { Find-OpenD }
+    if ($openD) {
+        Write-Host "Starting moomoo OpenD. Log in in its window if it asks."
+        Start-Process $openD
+    }
+    if ($running -or $openD) {
+        Wait-Port $OpenDPort "moomoo OpenD" 120 | Out-Null
+    } else {
+        Write-Warning "moomoo OpenD is not running and no shortcut to it was found. Start it and log in; the desk shows an error until then."
+    }
+    if (Test-Port $OpenDPort) { Write-Host "moomoo OpenD: running" -ForegroundColor Green }
 }
 
 if (Test-Port $OpenbbPort) {

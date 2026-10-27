@@ -213,7 +213,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
+try {
+    & (Join-Path $PSScriptRoot "shortcuts.ps1")
+} catch {
+    Write-Note "Could not create the desktop icons: $($_.Exception.Message)"
+}
+
+Write-Host ""
 Write-Host "Installed." -ForegroundColor Green
 Write-Host "  Settings:   $TgHome\desk.toml and $TgHome\watchlist.txt"
-Write-Host "  Start:      powershell -ExecutionPolicy Bypass -File `"$PSScriptRoot\start.ps1`""
+Write-Host "  Start:      the Start Trading God icon on the desktop"
 Write-Host "  Desk page:  http://127.0.0.1:8765  (approve or reject proposals here)"

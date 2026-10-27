@@ -34,7 +34,7 @@ Vibe-Trading's loaders supply the data, and
   wants two playbooks to agree, sizes each order by the loss at its stop, reviews
   exits, and reads your rejection notes before proposing again.
 - **The daily scan**: registered with Vibe-Trading's scheduler for 8:35 a.m. New York time.
-- **Windows scripts**: `setup\install.ps1`, `setup\start.ps1` and `setup\stop.ps1`.
+- **Windows scripts**: `setup\install.ps1`, `start.ps1`, `stop.ps1`, `update.ps1`, and `shortcuts.ps1` for the desktop icons.
 
 ## Safety rails
 
@@ -102,30 +102,37 @@ US stocks in the moomoo app.
    - installs the six skills into `%USERPROFILE%\.vibe-trading\skills\user`
    - copies `desk.toml` and `watchlist.txt` into `%USERPROFILE%\.trading-god`
 
+   It also puts three icons on the desktop: **Start Trading God**, **Stop Trading God**
+   and **Update Trading God**.
+
 4. Sign in to Claude Code once, if you have not: `claude auth login`.
 5. Check moomoo: `%USERPROFILE%\.trading-god\venvs\vibe\Scripts\tg-desk.exe check`
    should show your US paper account and its balance.
 
 ## Daily use
 
-```powershell
-powershell -ExecutionPolicy Bypass -File trading-god\setup\start.ps1
-```
-
-This starts OpenBB, the desk and Vibe-Trading, each in a minimized window. It
-registers the 8:35 a.m. scan and opens two pages:
+Double-click **Start Trading God** on the desktop. If moomoo OpenD is not running, it
+starts OpenD from its shortcut and waits up to two minutes for you to log in. Then it
+starts OpenBB, the desk and Vibe-Trading, each in a minimized window, registers the
+8:35 a.m. scan and opens two pages:
 
 - **Desk page** at http://127.0.0.1:8765. Proposals wait here. Each card shows the
   order, the loss if the stop is hit, the thesis, the playbooks and the risk checks.
-  Add a note and approve or reject. Proposals expire after 12 hours.
+  Add a note and approve or reject. Proposals expire after 12 hours, but never before
+  the next market close, so an evening scan can be approved the next day.
 - **Vibe-Trading** at http://127.0.0.1:8899. Read the scan reports and chat with the
   agent. To run a scan now, paste the output of `tg-desk prompt` into a new chat.
 
-`stop.ps1` stops the three services and leaves OpenD alone.
+**Stop Trading God** stops the three services and leaves OpenD alone. **Update Trading
+God** pulls the latest code, reinstalls dependencies or rebuilds the web page only when
+they changed, and restarts everything. Each icon's window closes by itself when all
+went well, and stays open on an error or a warning so you can read it.
 
-To update, run `git pull`, then `stop.ps1` and `start.ps1`. `start.ps1` refreshes the
-agent's `trading-god-desk` skill each time, so a changed skill takes effect without
-rerunning setup.
+The icons run the scripts in `trading-god\setup`, which also work from PowerShell:
+`start.ps1`, `stop.ps1` and `update.ps1`, each run as
+`powershell -ExecutionPolicy Bypass -File trading-god\setup\<name>.ps1`. If the icons
+are missing, `shortcuts.ps1` puts them back. `shortcuts.ps1 -AtLogin` also starts
+Trading God when you sign in to Windows.
 
 `tg-desk` (in `%USERPROFILE%\.trading-god\venvs\vibe\Scripts`) does the same from a
 terminal:
