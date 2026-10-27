@@ -75,24 +75,39 @@ def test_stdio_server_speaks_clean_json_rpc(tmp_path):
     # Point at a closed port, so a real OpenD on this machine is never touched.
     (home / "desk.toml").write_text("[moomoo]\nport = 1\n", encoding="utf-8")
     env = {**os.environ, "TRADING_GOD_HOME": str(home), "PYTHONUNBUFFERED": "1"}
-    params = StdioServerParameters(command=sys.executable, args=["-m", "trading_god.mcp_server"], env=env)
+    # If the server hangs, it prints every thread's stack to stderr and exits, so a
+    # failure says where it was stuck.
+    launch = (
+        "import faulthandler, runpy; faulthandler.dump_traceback_later(40, exit=True); "
+        "runpy.run_module('trading_god.mcp_server', run_name='__main__')"
+    )
+    params = StdioServerParameters(command=sys.executable, args=["-c", launch], env=env)
 
     log_path = tmp_path / "server-stderr.log"
+    steps = []
 
     async def session_run():
         with anyio.fail_after(60), log_path.open("w", encoding="utf-8") as errlog:
             async with stdio_client(params, errlog=errlog) as (read, write):
+                steps.append("spawned")
                 async with ClientSession(read, write) as session:
                     await session.initialize()
+                    steps.append("initialized")
                     tools = await session.list_tools()
+                    steps.append("listed tools")
                     listed = await session.call_tool("list_proposals", {"status": "pending"})
+                    steps.append("called list_proposals")
                     portfolio = await session.call_tool("get_portfolio", {})
+                    steps.append("called get_portfolio")
                     return tools, listed, portfolio
 
     try:
         tools, listed, portfolio = anyio.run(session_run)
-    except TimeoutError:
-        pytest.fail("desk MCP server did not answer; its stderr was:\n" + log_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        pytest.fail(
+            f"desk MCP server did not answer ({exc!r}) after steps {steps}; its stderr was:\n"
+            + log_path.read_text(encoding="utf-8", errors="replace")
+        )
     assert {t.name for t in tools.tools} == set(DESK_TOOLS)
     assert json.loads(listed.content[0].text) == {"status": "ok", "proposals": []}
     assert "OpenD is not listening on 127.0.0.1:1" in json.loads(portfolio.content[0].text)["error"]
