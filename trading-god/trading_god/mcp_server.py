@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import sys
 from typing import Annotated, Any, Callable, Literal
 
@@ -125,36 +124,19 @@ def withdraw_proposal(
     return _safely(lambda: _get_desk().withdraw(proposal_id, reason))
 
 
-def _reserve_stdout_for_protocol() -> io.BufferedWriter | None:
-    """Give the MCP channel its own copy of stdout and send everything else to stderr.
-
-    The futu SDK can print to stdout, and one stray line would corrupt the
-    JSON-RPC stream, so file descriptor 1 and ``sys.stdout`` both point at
-    stderr while the protocol writes to a duplicate of the original pipe.
-    """
-    try:
-        protocol = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
-        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-        sys.stdout = sys.stderr
-        return protocol
-    except (OSError, ValueError, AttributeError) as exc:
-        logger.warning("could not separate stdout from the MCP channel: %s", exc)
-        return None
-
-
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
-    protocol = _reserve_stdout_for_protocol()
-    if protocol is None:
-        server.run()
-        return
 
     import anyio
     from mcp.server.stdio import stdio_server
 
+    # The protocol keeps the real stdout; anything else that prints (the futu
+    # SDK can) goes to stderr instead of corrupting the JSON-RPC stream.
+    protocol = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stdout = sys.stderr
+
     async def serve() -> None:
-        stdout = anyio.wrap_file(io.TextIOWrapper(protocol, encoding="utf-8"))
-        async with stdio_server(stdout=stdout) as (read_stream, write_stream):
+        async with stdio_server(stdout=anyio.wrap_file(protocol)) as (read_stream, write_stream):
             low_level = server._mcp_server
             await low_level.run(read_stream, write_stream, low_level.create_initialization_options())
 

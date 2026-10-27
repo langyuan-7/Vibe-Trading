@@ -77,9 +77,11 @@ def test_stdio_server_speaks_clean_json_rpc(tmp_path):
     env = {**os.environ, "TRADING_GOD_HOME": str(home), "PYTHONUNBUFFERED": "1"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "trading_god.mcp_server"], env=env)
 
+    log_path = tmp_path / "server-stderr.log"
+
     async def session_run():
-        with anyio.fail_after(60):
-            async with stdio_client(params) as (read, write):
+        with anyio.fail_after(60), log_path.open("w", encoding="utf-8") as errlog:
+            async with stdio_client(params, errlog=errlog) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
@@ -87,7 +89,10 @@ def test_stdio_server_speaks_clean_json_rpc(tmp_path):
                     portfolio = await session.call_tool("get_portfolio", {})
                     return tools, listed, portfolio
 
-    tools, listed, portfolio = anyio.run(session_run)
+    try:
+        tools, listed, portfolio = anyio.run(session_run)
+    except TimeoutError:
+        pytest.fail("desk MCP server did not answer; its stderr was:\n" + log_path.read_text(encoding="utf-8"))
     assert {t.name for t in tools.tools} == set(DESK_TOOLS)
     assert json.loads(listed.content[0].text) == {"status": "ok", "proposals": []}
     assert "OpenD is not listening on 127.0.0.1:1" in json.loads(portfolio.content[0].text)["error"]
