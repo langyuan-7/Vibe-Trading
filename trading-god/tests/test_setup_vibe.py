@@ -64,6 +64,7 @@ def test_env_merge_keeps_other_settings(tmp_path):
     assert "OPENAI_API_KEY=keep-me" in text and "# mine" in text
     assert "LANGCHAIN_PROVIDER=claude-cli" in text and "LANGCHAIN_PROVIDER=openai" not in text
     assert "CLAUDE_CLI_DENY_TOOL_PREFIXES=trading_,etoro_" in text
+    assert "VIBE_TRADING_AGENT_MAX_ITERATIONS=120" in text
     assert "CLAUDE_CLI_PATH=C:/Users/lang/.local/bin/claude.exe" in text
     assert merge_env(path, env_updates("sonnet", "C:/Users/lang/.local/bin/claude.exe")) == {
         "path": str(path),

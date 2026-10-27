@@ -26,6 +26,16 @@ approve or cancel an order. A proposal is not a trade: an order exists only when
   `buffett`, `lynch-growth`.
 - Memory: `remember`.
 
+## Budget
+
+A run has a fixed number of steps, and each reply you send is one step whether it
+holds one tool call or ten. When calls do not depend on each other, send them together
+in one reply: `technical_indicators` for every watch-list symbol at once, then the
+evidence calls for every shortlisted stock at once. Do not spend steps re-fetching data
+you already hold. Steps 3, 5 and 6 are the research; never skip them to save steps.
+If you are told to wrap up before they are done, propose nothing and say in the report
+which steps did not run.
+
 ## Process
 
 1. **Account.** Call `mcp_desk_get_portfolio`. Note equity, cash, positions, `limits`
@@ -35,15 +45,17 @@ approve or cancel an order. A proposal is not a trade: an order exists only when
    `rejected,placed,blocked,failed,expired,pending` and `remember` with action `recall`
    and query `trading-god lessons`. Read every decision note. Do not propose again what
    the person rejected unless the reason they gave no longer holds, and then say why.
-3. **Market regime.** Load `marks-cycles`. Run `technical_indicators` on SPY and QQQ
-   (price against SMA 50 and SMA 200, RSI) and skim the market news. Label the regime:
+3. **Market regime.** Load `marks-cycles`. In the same reply, run `technical_indicators`
+   on SPY, QQQ and every watch-list symbol (price against SMA 50 and SMA 200, RSI), and
+   skim the market news. Label the regime:
    - **risk-on**: both above a rising 200-day line. Up to the run's proposal limit.
    - **mixed**: one above and one below, or the 50-day falling. At most one buy, at half size.
    - **risk-off**: both below the 200-day line. No new buys; review exits only.
 4. **Shortlist.** From the watch list, keep stocks above $5 that are in an uptrend
    (price above SMA 50 and SMA 200, with SMA 50 above SMA 200), or that have a clear
    value case. Keep at most five. Skip any symbol that already has a pending proposal.
-5. **Evidence.** For each shortlisted stock, gather:
+5. **Evidence.** For each shortlisted stock, gather the following, with the calls for
+   all of them in one or two replies:
    - trend, RSI and volatility from `technical_indicators`
    - revenue and EPS growth for the last two quarters
    - the next earnings date
