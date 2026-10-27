@@ -133,13 +133,23 @@ if (-not $SkipFrontend) {
     if (-not $SkipFrontend) { Write-Ok "node: v$node" }
 }
 
-if (-not (Test-Command "claude")) {
-    if (-not (Confirm-Install "Claude Code (the agent's brain, using your Claude login)")) { throw "Claude Code is required." }
+# Vibe-Trading starts claude with subprocess, which needs claude.exe: it cannot
+# run npm's claude.ps1, and cmd.exe mangles its arguments through claude.cmd.
+function Find-ClaudeExe {
+    $native = Join-Path $env:USERPROFILE ".local\bin\claude.exe"
+    if (Test-Path $native) { return $native }
+    return Get-Command "claude" -CommandType Application -All -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -eq ".exe" } | Select-Object -First 1 -ExpandProperty Source
+}
+$ClaudePath = Find-ClaudeExe
+if (-not $ClaudePath) {
+    $why = if (Test-Command "claude") { "Claude Code native build (your current claude is an npm script the agent cannot start; your login is kept)" } else { "Claude Code (the agent's brain, using your Claude login)" }
+    if (-not (Confirm-Install $why)) { throw "Claude Code (claude.exe) is required." }
     Invoke-RestMethod "https://claude.ai/install.ps1" | Invoke-Expression
     Update-SessionPath
-    if (-not (Test-Command "claude")) { throw "Claude Code was installed but is not on PATH yet. Open a new PowerShell window and run this script again." }
+    $ClaudePath = Find-ClaudeExe
+    if (-not $ClaudePath) { throw "Claude Code was installed but claude.exe was not found. Open a new PowerShell window and run this script again." }
 }
-$ClaudePath = (Get-Command "claude").Source
 Write-Ok "claude: $ClaudePath"
 
 # -- 2. Python ----------------------------------------------------------------

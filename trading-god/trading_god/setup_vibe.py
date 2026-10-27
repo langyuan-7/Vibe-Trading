@@ -74,6 +74,26 @@ def merge_env(path: Path, updates: dict[str, str]) -> dict[str, Any]:
     return {"path": str(path), "changed": True, "backup": str(backup) if backup else None}
 
 
+def runnable_claude(path: str) -> str:
+    """Swap an npm ``claude.ps1`` or ``claude.cmd`` shim for a real ``claude.exe``.
+
+    Vibe-Trading starts Claude Code with ``subprocess``. It cannot run a
+    PowerShell script at all ("[WinError 193] %1 is not a valid Win32
+    application"), and through a batch file cmd.exe would mangle the quotes in
+    the JSON schema argument.
+    """
+    shim = Path(path)
+    if shim.suffix.lower() not in (".ps1", ".cmd", ".bat"):
+        return path
+    for exe in (shim.with_suffix(".exe"), Path.home() / ".local" / "bin" / "claude.exe"):
+        if exe.is_file():
+            return str(exe)
+    raise ValueError(
+        f"{path} is a script, which Vibe-Trading cannot start. Install the native Claude Code "
+        "with: irm https://claude.ai/install.ps1 | iex"
+    )
+
+
 def env_updates(model: str, claude_path: str | None) -> dict[str, str]:
     updates = {
         # Drive the agent with the local Claude Code login: no API key, no per-token bill.
@@ -88,7 +108,7 @@ def env_updates(model: str, claude_path: str | None) -> dict[str, str]:
         "VIBE_TRADING_ENABLE_SCHEDULER": "1",
     }
     if claude_path:
-        updates["CLAUDE_CLI_PATH"] = claude_path
+        updates["CLAUDE_CLI_PATH"] = runnable_claude(claude_path)
     return updates
 
 
