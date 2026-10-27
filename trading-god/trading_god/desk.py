@@ -10,20 +10,21 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from trading_god import store as st
 from trading_god.broker import Account, BrokerError, MoomooPaperBroker
 from trading_god.config import Settings
-from trading_god.prices import PriceLookup
+from trading_god.prices import EarningsLookup, PriceLookup
 from trading_god.risk import (
     AccountState,
     Check,
     Holding,
     OrderRequest,
     RiskReport,
+    check_earnings,
     check_exit_plan,
     evaluate,
     normalize_symbol,
@@ -54,6 +55,35 @@ def us_trading_day_start(moment: datetime) -> datetime:
         return moment.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     local = moment.astimezone(new_york)
     return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def us_date(moment: datetime) -> date:
+    """``moment``'s calendar day in New York."""
+    try:
+        return moment.astimezone(ZoneInfo("America/New_York")).date()
+    except ZoneInfoNotFoundError:
+        return moment.astimezone(timezone.utc).date()
+
+
+def proposal_expiry(now: datetime, ttl_hours: float) -> datetime:
+    """``ttl_hours`` from now, but never before the next regular US session closes.
+
+    A scan run in the evening would otherwise expire overnight, before anyone could
+    approve it during market hours. Exchange holidays are not known.
+    """
+    expires = now + timedelta(hours=ttl_hours)
+    try:
+        new_york = ZoneInfo("America/New_York")
+    except ZoneInfoNotFoundError:
+        return expires
+    local = now.astimezone(new_york)
+    day = local.date()
+    if day.weekday() >= 5 or local.time() >= time(16, 0):
+        day += timedelta(days=1)
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+    close = datetime.combine(day, time(16, 0), tzinfo=new_york).astimezone(timezone.utc)
+    return max(expires, close)
 
 
 def _optional_float(value: Any, name: str) -> float | None:
@@ -115,6 +145,7 @@ class Desk:
         *,
         notifier: Notifier | None = None,
         clock: Callable[[], datetime] = utc_now,
+        earnings: EarningsLookup | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
@@ -122,6 +153,8 @@ class Desk:
         self.prices = prices
         self.notifier = notifier
         self.clock = clock
+        self.earnings = earnings
+        self._earnings_seen: dict[tuple[str, date], date | None] = {}
 
     # -- shared helpers ---------------------------------------------------
 
@@ -159,7 +192,21 @@ class Desk:
         )
         entry = order.limit_price if order.order_type == "limit" and order.limit_price else price
         plan = check_exit_plan(order.side, entry, stop_loss, take_profit)
+        plan += self._earnings_check(order, now)
         return RiskReport(report.checks + tuple(plan), report.price, report.notional)
+
+    def _earnings_check(self, order: OrderRequest, now: datetime) -> list[Check]:
+        if self.earnings is None or order.side != "buy" or self.settings.risk.earnings_blackout_days <= 0:
+            return []
+        today = us_date(now)
+        key = (order.symbol, today)
+        if key not in self._earnings_seen:
+            try:
+                self._earnings_seen[key] = self.earnings(order.symbol, today)
+            except Exception as exc:  # noqa: BLE001 - an unknown date is not a reason to crash
+                logger.info("earnings lookup for %s failed: %s", order.symbol, exc)
+                self._earnings_seen[key] = None
+        return check_earnings(order.side, today, self._earnings_seen[key], self.settings.risk.earnings_blackout_days)
 
     def expire_stale(self) -> int:
         return self.store.expire(iso(self.clock()))
@@ -278,7 +325,7 @@ class Desk:
             )
             report = RiskReport(report.checks + (clash,), report.price, report.notional)
         status = st.PENDING if report.passed else st.REFUSED
-        expires = now + timedelta(hours=self.settings.proposals.ttl_hours)
+        expires = proposal_expiry(now, self.settings.proposals.ttl_hours)
         proposal = self.store.add(
             created_at=iso(now),
             expires_at=iso(expires),

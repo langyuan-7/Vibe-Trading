@@ -1,7 +1,10 @@
-from conftest import buy
+from datetime import date, datetime, timezone
+
+from conftest import START, buy
 
 from trading_god import store as st
 from trading_god.broker import BrokerError
+from trading_god.desk import proposal_expiry
 
 
 def test_valid_buy_is_queued_not_placed(desk, broker, notes):
@@ -204,3 +207,51 @@ def test_order_numbers_come_back_as_numbers(desk):
     assert result["notional"] == 19953.0
     (row,) = desk.history("pending")
     assert (row["symbol"], row["limit_price"], row["stop_loss"], row["quantity"]) == ("US.AAPL", 199.53, 185.25, 100)
+
+
+def test_buy_into_earnings_is_refused(desk):
+    asked = []
+
+    def earnings(symbol, today):
+        asked.append((symbol, today))
+        return {"US.AAPL": date(2026, 10, 29)}.get(symbol)
+
+    desk.earnings = earnings
+    result = buy(desk)
+    assert result["status"] == st.REFUSED
+    assert any(p.startswith("earnings") and "2026-10-29" in p for p in result["problems"])
+    assert buy(desk, symbol="MSFT", quantity=50, limit=400.0, stop=370.0)["status"] == st.PENDING
+    assert asked == [("US.AAPL", date(2026, 10, 27)), ("US.MSFT", date(2026, 10, 27))]
+
+
+def test_earnings_lookup_failure_does_not_block(desk):
+    def earnings(symbol, today):
+        raise RuntimeError("Yahoo is down")
+
+    desk.earnings = earnings
+    assert buy(desk)["status"] == st.PENDING
+
+
+def test_approval_rechecks_earnings(desk, broker):
+    proposal_id = buy(desk)["proposal_id"]  # proposed before the date was known
+    desk.earnings = lambda symbol, today: date(2026, 10, 28)
+    result = desk.approve(proposal_id)
+    assert result["status"] == st.BLOCKED
+    assert any(p.startswith("earnings") for p in result["problems"])
+    assert broker.placed == []
+
+
+def test_morning_proposal_keeps_its_ttl():
+    # 10:00 New York: 12 hours runs past today's close.
+    assert proposal_expiry(START, 12) == datetime(2026, 10, 28, 2, 0, tzinfo=timezone.utc)
+
+
+def test_evening_proposal_lasts_through_the_next_session():
+    # 18:57 New York on Tuesday: open until Wednesday's 16:00 close.
+    evening = datetime(2026, 10, 27, 22, 57, tzinfo=timezone.utc)
+    assert proposal_expiry(evening, 12) == datetime(2026, 10, 28, 20, 0, tzinfo=timezone.utc)
+
+
+def test_weekend_proposal_lasts_through_monday():
+    friday_night = datetime(2026, 10, 31, 1, 0, tzinfo=timezone.utc)  # 21:00 Friday in New York
+    assert proposal_expiry(friday_night, 12) == datetime(2026, 11, 2, 21, 0, tzinfo=timezone.utc)  # EST by then

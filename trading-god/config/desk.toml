@@ -23,9 +23,11 @@ max_limit_deviation_pct = 15.0  # a limit price more than 15% from the last pric
 allow_market_orders = true
 market_order_buffer_pct = 1.0   # market buys are sized at last price + 1%
 blocked_symbols = []        # e.g. ["GME", "AMC"]
+earnings_blackout_days = 5  # no new buy when earnings are this many trading days away or fewer; 0 = off
 
 [proposals]
-ttl_hours = 12              # an undecided proposal expires after this many hours
+ttl_hours = 12              # an undecided proposal expires after this many hours, but never
+                            # before the next US market close, so evening scans last into the session
 
 [web]
 host = "127.0.0.1"          # the desk page is for this computer only

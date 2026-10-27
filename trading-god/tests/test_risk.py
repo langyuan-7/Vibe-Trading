@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from trading_god.risk import (
@@ -5,6 +7,8 @@ from trading_god.risk import (
     Holding,
     OrderRequest,
     RiskLimits,
+    trading_days_until,
+    check_earnings,
     check_exit_plan,
     evaluate,
     normalize_symbol,
@@ -176,3 +180,39 @@ def test_report_round_trips_to_json_friendly_dict():
     data = evaluate(OrderRequest("US.AAPL", "buy", 100, "limit", 200.0), 200.0, FRESH, LIMITS).to_dict()
     assert data["passed"] is True
     assert {"name", "passed", "detail"} <= set(data["checks"][0])
+
+
+TUESDAY = date(2026, 10, 27)
+
+
+def test_trading_days_skip_weekends():
+    assert trading_days_until(TUESDAY, TUESDAY) == 0
+    assert trading_days_until(TUESDAY, date(2026, 10, 28)) == 1
+    assert trading_days_until(TUESDAY, date(2026, 11, 2)) == 4  # Wed, Thu, Fri, Mon
+    assert trading_days_until(TUESDAY, date(2026, 11, 3)) == 5
+
+
+@pytest.mark.parametrize(
+    ("earnings", "passed"),
+    [
+        (TUESDAY, False),
+        (date(2026, 11, 3), False),  # 5 trading days away: still inside the window
+        (date(2026, 11, 4), True),
+    ],
+)
+def test_buys_near_earnings_are_refused(earnings, passed):
+    (check,) = check_earnings("buy", TUESDAY, earnings, 5)
+    assert check.name == "earnings" and check.passed is passed
+    assert earnings.isoformat() in check.detail
+
+
+def test_unknown_earnings_date_passes_with_a_warning():
+    (check,) = check_earnings("buy", TUESDAY, None, 5)
+    assert check.passed and "check it before approving" in check.detail
+
+
+def test_earnings_check_skips_sells_and_can_be_turned_off():
+    assert check_earnings("sell", TUESDAY, TUESDAY, 5) == []
+    assert check_earnings("buy", TUESDAY, TUESDAY, 0) == []
+    with pytest.raises(ValueError):
+        RiskLimits(earnings_blackout_days=-1)

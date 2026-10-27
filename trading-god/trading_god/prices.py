@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Callable
+from datetime import date, datetime
+from typing import Any, Callable, Iterable
 
 logger = logging.getLogger(__name__)
 
 PriceLookup = Callable[[str], "float | None"]
+#: ``(symbol, today) -> next earnings date on or after today``, or None if unknown.
+EarningsLookup = Callable[[str, date], "date | None"]
 
 
 def yahoo_ticker(symbol: str) -> str:
@@ -49,3 +52,46 @@ def first_price(*lookups: PriceLookup) -> PriceLookup:
         return None
 
     return lookup
+
+
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    to_pydatetime = getattr(value, "to_pydatetime", None)  # pandas Timestamp
+    if callable(to_pydatetime):
+        return to_pydatetime().date()
+    return None
+
+
+def next_on_or_after(values: Iterable[Any], today: date) -> date | None:
+    days = [d for d in (_as_date(v) for v in values) if d is not None and d >= today]
+    return min(days) if days else None
+
+
+def yahoo_next_earnings(symbol: str, today: date) -> date | None:
+    """The next earnings date Yahoo lists, from the calendar or the earnings history."""
+    try:
+        import yfinance as yf
+
+        ticker = yf.Ticker(yahoo_ticker(symbol))
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Yahoo earnings lookup for %s failed: %s", symbol, exc)
+        return None
+    try:
+        calendar = ticker.calendar
+        dates = calendar.get("Earnings Date") if isinstance(calendar, dict) else None
+        if dates is not None:
+            found = next_on_or_after(dates if isinstance(dates, (list, tuple)) else [dates], today)
+            if found is not None:
+                return found
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Yahoo calendar for %s failed: %s", symbol, exc)
+    try:
+        frame = ticker.get_earnings_dates(limit=8)
+        if frame is not None and len(frame.index):
+            return next_on_or_after(list(frame.index), today)
+    except Exception as exc:  # noqa: BLE001
+        logger.info("Yahoo earnings dates for %s failed: %s", symbol, exc)
+    return None
