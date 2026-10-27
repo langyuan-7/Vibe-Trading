@@ -9,6 +9,7 @@ from trading_god.setup_vibe import (
     MANAGED_MARKER,
     configure,
     env_updates,
+    runnable_claude,
     install_skills,
     mcp_servers,
     merge_agent_config,
@@ -170,3 +171,21 @@ def test_the_desk_skill_names_only_real_tools():
         assert f"mcp_openbb_{tool}" in text
     for playbook in read_playbook_list():
         assert f"`{playbook}`" in text
+
+
+def test_claude_script_shims_are_swapped_for_the_native_exe(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    npm = tmp_path / "npm"
+    npm.mkdir()
+    for name in ("claude.ps1", "claude.cmd"):
+        (npm / name).write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="install.ps1"):
+        runnable_claude(str(npm / "claude.ps1"))
+    native = tmp_path / "home" / ".local" / "bin" / "claude.exe"
+    native.parent.mkdir(parents=True)
+    native.write_text("", encoding="utf-8")
+    assert runnable_claude(str(npm / "claude.ps1")) == str(native)
+    assert env_updates("sonnet", str(npm / "claude.cmd"))["CLAUDE_CLI_PATH"] == str(native)
+    (npm / "claude.exe").write_text("", encoding="utf-8")
+    assert runnable_claude(str(npm / "claude.ps1")) == str(npm / "claude.exe")
+    assert runnable_claude("/usr/local/bin/claude") == "/usr/local/bin/claude"
