@@ -195,3 +195,12 @@ def test_portfolio_reports_limits_in_dollars(desk, broker):
     assert portfolio["positions"][0]["weight_pct"] == 2.0
     assert portfolio["today"] == {"buys_placed": 0, "buys_left": 5}
     assert portfolio["pending_proposals"] == 1
+
+
+def test_order_numbers_come_back_as_numbers(desk):
+    # Vibe-Trading's grounding gate accepts only figures a tool returned as numbers.
+    result = buy(desk, quantity=100, limit=199.53, stop=185.25)
+    assert (result["limit_price"], result["stop_loss"], result["quantity"]) == (199.53, 185.25, 100)
+    assert result["notional"] == 19953.0
+    (row,) = desk.history("pending")
+    assert (row["symbol"], row["limit_price"], row["stop_loss"], row["quantity"]) == ("US.AAPL", 199.53, 185.25, 100)

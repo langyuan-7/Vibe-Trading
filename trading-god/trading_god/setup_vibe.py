@@ -266,8 +266,12 @@ def _replace_managed(dest: Path) -> None:
     (dest / MANAGED_MARKER).write_text("Created by Trading God setup; rerunning setup replaces this folder.\n")
 
 
-def install_skills(user_skills: Path, playbooks: list[str], investorskills: Path) -> list[str]:
-    """Copy our own skills and the chosen playbooks; drop managed playbooks no longer chosen."""
+def install_own_skills(user_skills: Path) -> list[str]:
+    """Copy Trading God's own skills, leaving the playbooks alone.
+
+    ``start.ps1`` runs this on every start, so a ``git pull`` reaches the agent
+    without rerunning setup.
+    """
     user_skills.mkdir(parents=True, exist_ok=True)
     installed: list[str] = []
     for skill_dir in sorted(p for p in SKILLS_DIR.iterdir() if (p / "SKILL.md").is_file()):
@@ -275,6 +279,12 @@ def install_skills(user_skills: Path, playbooks: list[str], investorskills: Path
         _replace_managed(dest)
         shutil.copy2(skill_dir / "SKILL.md", dest / "SKILL.md")
         installed.append(skill_dir.name)
+    return installed
+
+
+def install_skills(user_skills: Path, playbooks: list[str], investorskills: Path) -> list[str]:
+    """Copy our own skills and the chosen playbooks; drop managed playbooks no longer chosen."""
+    installed = install_own_skills(user_skills)
     for name in playbooks:
         source = investorskills / "skills" / name
         if not (source / "SKILL.md").is_file():

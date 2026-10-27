@@ -78,6 +78,24 @@ def _whole_shares(value: Any) -> int:
     return int(number)
 
 
+def order_fields(proposal: st.Proposal) -> dict[str, Any]:
+    """The order as numbers, so the agent can quote them exactly.
+
+    Vibe-Trading's grounding gate only accepts a figure that a tool returned as a
+    number; one inside the ``summary`` text does not count.
+    """
+    return {
+        "symbol": proposal.symbol,
+        "side": proposal.side,
+        "quantity": proposal.quantity,
+        "order_type": proposal.order_type,
+        "limit_price": proposal.limit_price,
+        "stop_loss": proposal.stop_loss,
+        "take_profit": proposal.take_profit,
+        "notional": round(proposal.notional, 2) if proposal.notional else proposal.notional,
+    }
+
+
 def describe(proposal: st.Proposal) -> str:
     """One line a person can read at a glance."""
     price = f"limit ${proposal.limit_price:,.2f}" if proposal.order_type == "limit" else "at market"
@@ -303,6 +321,7 @@ class Desk:
             "status": st.PENDING,
             "proposal_id": proposal.id,
             "summary": describe(proposal),
+            **order_fields(proposal),
             "expires_at": proposal.expires_at,
             "next": "Queued for a person to approve. It is NOT placed yet; never report it as a trade.",
         }
@@ -336,9 +355,8 @@ class Desk:
                     "created_at": p.created_at,
                     "status": p.status,
                     "order": describe(p),
+                    **order_fields(p),
                     "playbook": p.playbook,
-                    "stop_loss": p.stop_loss,
-                    "take_profit": p.take_profit,
                     "thesis": p.thesis[:300],
                     "decided_at": p.decided_at,
                     "decision_note": p.decision_note,

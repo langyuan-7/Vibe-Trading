@@ -123,6 +123,10 @@ registers the 8:35 a.m. scan and opens two pages:
 
 `stop.ps1` stops the three services and leaves OpenD alone.
 
+To update, run `git pull`, then `stop.ps1` and `start.ps1`. `start.ps1` refreshes the
+agent's `trading-god-desk` skill each time, so a changed skill takes effect without
+rerunning setup.
+
 `tg-desk` (in `%USERPROFILE%\.trading-god\venvs\vibe\Scripts`) does the same from a
 terminal:
 
@@ -135,6 +139,7 @@ terminal:
 | `tg-desk check` | Is OpenD up, which paper account is in use |
 | `tg-desk prompt` | The scan prompt, to run a scan by hand |
 | `tg-desk schedule` | Register the scan again, for example after changing the watch list |
+| `tg-desk skills` | Refresh the agent's Trading God skill after a `git pull` |
 
 ## Settings
 

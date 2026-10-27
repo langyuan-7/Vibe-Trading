@@ -125,6 +125,18 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skills(args: argparse.Namespace) -> int:
+    from trading_god.setup_vibe import install_own_skills, vibe_home
+
+    try:
+        installed = install_own_skills(vibe_home() / "skills" / "user")
+    except (RuntimeError, OSError) as exc:
+        print(f"Could not refresh the skills: {exc}", file=sys.stderr)
+        return 1
+    print(f"Refreshed {', '.join(installed)}.")
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     from trading_god.setup_vibe import configure
 
@@ -177,6 +189,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "prompt", help="print the pre-market scan prompt, to run a scan by hand in Vibe-Trading"
     ).set_defaults(func=cmd_prompt)
+
+    sub.add_parser(
+        "skills", help="refresh the agent's Trading God skill after a git pull (run by start.ps1)"
+    ).set_defaults(func=cmd_skills)
 
     p = sub.add_parser("setup", help="configure Vibe-Trading for Trading God (run by install.ps1)")
     p.add_argument("--desk-python", default="", help="python.exe of this environment (default: the current one)")
