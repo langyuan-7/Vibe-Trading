@@ -106,6 +106,9 @@ def env_updates(model: str, claude_path: str | None) -> dict[str, str]:
         # Runs the daily pre-market scan. Vibe-Trading's own system jobs keep
         # their separate switches, so this starts nothing else.
         "VIBE_TRADING_ENABLE_SCHEDULER": "1",
+        # A full scan takes more than Vibe-Trading's default 50 steps; at 80% of
+        # the budget the agent is told to wrap up, and it skipped the research.
+        "VIBE_TRADING_AGENT_MAX_ITERATIONS": "120",
     }
     if claude_path:
         updates["CLAUDE_CLI_PATH"] = runnable_claude(claude_path)
