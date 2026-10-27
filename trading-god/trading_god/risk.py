@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import date, timedelta
 from typing import Any, Mapping
 
 #: A US stock or ETF in moomoo's code format, e.g. ``US.AAPL`` or ``US.BRK.B``.
@@ -54,6 +55,8 @@ class RiskLimits:
     allow_market_orders: bool = True
     market_order_buffer_pct: float = 1.0
     blocked_symbols: tuple[str, ...] = ()
+    #: No new buy when the company reports within this many trading days; 0 turns it off.
+    earnings_blackout_days: int = 5
 
     def __post_init__(self) -> None:
         for name in ("max_order_pct", "max_position_pct", "max_invested_pct"):
@@ -62,6 +65,8 @@ class RiskLimits:
                 raise ValueError(f"risk.{name} must be above 0 and at most 100, got {value}")
         if self.max_buys_per_day < 0 or self.max_pending < 1:
             raise ValueError("risk.max_buys_per_day must be >= 0 and risk.max_pending >= 1")
+        if self.earnings_blackout_days < 0:
+            raise ValueError("risk.earnings_blackout_days must be >= 0")
         if self.min_price < 0 or self.max_limit_deviation_pct <= 0 or self.market_order_buffer_pct < 0:
             raise ValueError("risk.min_price, max_limit_deviation_pct and market_order_buffer_pct must be positive")
         object.__setattr__(self, "blocked_symbols", tuple(normalize_symbol(s) for s in self.blocked_symbols))
@@ -144,6 +149,34 @@ class RiskReport:
             "notional": self.notional,
             "checks": [asdict(check) for check in self.checks],
         }
+
+
+def trading_days_until(today: date, day: date) -> int:
+    """Weekdays after ``today`` up to and including ``day``; exchange holidays are not known."""
+    count = 0
+    current = today
+    while current < day:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            count += 1
+    return count
+
+
+def check_earnings(side: str, today: date, earnings: date | None, blackout_days: int) -> list[Check]:
+    """A new position should not walk into an earnings report it never looked at.
+
+    ``earnings`` is the next report date on or after ``today``, or None when no
+    source had one; that passes, but the card says so.
+    """
+    if side != "buy" or blackout_days <= 0:
+        return []
+    if earnings is None:
+        return [Check("earnings", True, "no upcoming earnings date found; check it before approving")]
+    days = trading_days_until(today, earnings)
+    when = f"reports earnings on {earnings.isoformat()}, {days} trading day{'s' if days != 1 else ''} away"
+    if days <= blackout_days:
+        return [Check("earnings", False, f"{when}; no new buys within {blackout_days} trading days of earnings")]
+    return [Check("earnings", True, when)]
 
 
 def check_exit_plan(side: str, entry: float | None, stop_loss: float | None, take_profit: float | None) -> list[Check]:

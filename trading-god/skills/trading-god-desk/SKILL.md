@@ -78,8 +78,9 @@ which steps did not run.
    - Size: risk about 0.5% of equity per idea, so shares = 0.005 × equity ÷ (entry − stop),
      rounded down. Then cut it to fit `limits.max_order_usd` and `limits.max_position_usd`.
      Use half size in a mixed market.
-   - Earnings within five trading days: do not open a new position unless the playbook
-     says to hold through earnings, and say so in the thesis.
+   - Earnings within five trading days: do not propose a new buy. The desk looks the date
+     up itself and refuses such buys, so check the date before proposing rather than after.
+     When the desk says no date was found, put the date you found, or "unknown", in the thesis.
 8. **Propose.** Call `mcp_desk_propose_order` once per idea, within the run's proposal
    limit. Use a limit order. The thesis has under 150 words: the setup, two to four key
    numbers with their dates, both playbook verdicts, and what would prove it wrong. Set
