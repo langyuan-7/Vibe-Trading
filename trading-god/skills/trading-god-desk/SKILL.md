@@ -57,8 +57,7 @@ which steps did not run.
 5. **Evidence.** For each shortlisted stock, gather the following, with the calls for
    all of them in one or two replies:
    - daily prices for the last three months from `get_market_data`, one call with every
-     shortlisted code (`AAPL.US`, ...). Entry and stop prices must sit inside this
-     observed range, and the report can only quote prices a tool returned.
+     shortlisted code (`AAPL.US`, ...), for the pivot, the base low and the last price.
    - trend, RSI and volatility from `technical_indicators`
    - revenue and EPS growth for the last two quarters
    - the next earnings date
@@ -96,21 +95,19 @@ which steps did not run.
 10. **Learn.** When a decision note or a result teaches something new, save one short
     lesson with `remember` (action `save`, memory_type `feedback`, title starting with
     `trading-god lessons:`). Save the lesson, not prices or trade lists.
-11. **Report.** Vibe-Trading checks every number in your answer against this run's tool
-    results before the person sees it, and rejects the whole report if one fails. So
-    keep the report's numbers few and sourced, and write the `figures` block the system
-    prompt describes: tool prices are `observed`, entry, stop and target are `proposed`
-    (inside the observed range from `get_market_data`), share counts and dollar risk
-    are `derived` with the sizing formula in the note, and the 0.5% risk is a `count`.
-    Leave out any figure you cannot declare truthfully; the desk page shows every
-    order in full. End with a short report:
-    - Regime: the label and the numbers behind it.
-    - Proposed: one line each, with the prices exactly as `mcp_desk_propose_order`
-      returned them, such as "#12 BUY 400 NVDA limit $171.20, stop $158,
-      waiting for approval".
-    - Passed over: one line each, with the reason.
+11. **Report.** Vibe-Trading checks every number in your final answer against this run's
+    tool results and withholds the whole answer if one does not match, and an order's
+    entry, stop and size are your proposals, not tool results. So the report carries no
+    prices, stops, targets, share counts, dollar amounts or percentages. The numbers
+    belong in each proposal's thesis, and the desk page shows every order in full.
+    End with a short report in words:
+    - Regime: the label and the reason, such as "mixed: SPY and QQQ are above their
+      200-day lines and below their 50-day lines".
+    - Proposed: one line each, such as "#12 BUY NVDA, minervini-vcp + lynch-growth,
+      waiting for approval on the desk page".
+    - Passed over: one line each, with the reason in words.
     - Exits reviewed.
-    - Data gaps: tools or numbers that failed.
+    - Data gaps: tools that failed or data you could not get.
     State that nothing is placed until a person approves it on the desk page.
 
 ## Rules
