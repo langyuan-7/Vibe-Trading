@@ -56,6 +56,9 @@ which steps did not run.
    value case. Keep at most five. Skip any symbol that already has a pending proposal.
 5. **Evidence.** For each shortlisted stock, gather the following, with the calls for
    all of them in one or two replies:
+   - daily prices for the last three months from `get_market_data`, one call with every
+     shortlisted code (`AAPL.US`, ...). Entry and stop prices must sit inside this
+     observed range, and the report can only quote prices a tool returned.
    - trend, RSI and volatility from `technical_indicators`
    - revenue and EPS growth for the last two quarters
    - the next earnings date
@@ -93,9 +96,17 @@ which steps did not run.
 10. **Learn.** When a decision note or a result teaches something new, save one short
     lesson with `remember` (action `save`, memory_type `feedback`, title starting with
     `trading-god lessons:`). Save the lesson, not prices or trade lists.
-11. **Report.** End with a short report:
+11. **Report.** Vibe-Trading checks every number in your answer against this run's tool
+    results before the person sees it, and rejects the whole report if one fails. So
+    keep the report's numbers few and sourced, and write the `figures` block the system
+    prompt describes: tool prices are `observed`, entry, stop and target are `proposed`
+    (inside the observed range from `get_market_data`), share counts and dollar risk
+    are `derived` with the sizing formula in the note, and the 0.5% risk is a `count`.
+    Leave out any figure you cannot declare truthfully; the desk page shows every
+    order in full. End with a short report:
     - Regime: the label and the numbers behind it.
-    - Proposed: one line each, such as "#12 BUY 400 NVDA limit $171.20, stop $158,
+    - Proposed: one line each, with the prices exactly as `mcp_desk_propose_order`
+      returned them, such as "#12 BUY 400 NVDA limit $171.20, stop $158,
       waiting for approval".
     - Passed over: one line each, with the reason.
     - Exits reviewed.
