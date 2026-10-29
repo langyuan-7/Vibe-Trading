@@ -91,7 +91,7 @@ th { color: var(--muted); font-weight: 600; }
 .status { font-weight: 600; }
 .status.placed { color: var(--good); } .status.rejected, .status.failed, .status.blocked, .status.refused { color: var(--bad); }
 .status.pending, .status.placing { color: var(--warn); }
-.empty { color: var(--muted); }
+.empty, .note { color: var(--muted); }
 """
 
 _REFRESH_SCRIPT = """
@@ -178,18 +178,26 @@ def _portfolio_html(portfolio: dict[str, Any]) -> str:
     row_html = []
     for p in portfolio["positions"]:
         pl = "" if p["pl_pct"] is None else f"{p['pl_pct']:.1f}%"
+        stop = "none" if p.get("stop_loss") is None else _money(p["stop_loss"])
         row_html.append(
             f"<tr><td>{escape(p['symbol'])}</td><td>{escape(p['name'])}</td><td>{p['quantity']:g}</td>"
-            f"<td>{_money(p['market_value'])}</td><td>{(p['weight_pct'] or 0):.1f}%</td><td>{pl}</td></tr>"
+            f"<td>{_money(p['market_value'])}</td><td>{(p['weight_pct'] or 0):.1f}%</td><td>{pl}</td>"
+            f"<td>{stop}</td></tr>"
         )
     rows = "".join(row_html)
     table = (
         f'<div class="table-wrap"><table><tr><th>Symbol</th><th>Name</th><th>Shares</th><th>Value</th>'
-        f"<th>Weight</th><th>P/L</th></tr>{rows}</table></div>"
+        f"<th>Weight</th><th>P/L</th><th>Stop</th></tr>{rows}</table></div>"
         if rows
         else '<p class="empty">No open positions.</p>'
     )
-    return f'<div class="stats">{stat_html}</div><h2>Positions</h2>{table}'
+    note = (
+        '<p class="note">A position that falls to its stop in market hours is sold at market, '
+        "without asking. Positions bought outside the desk have no stop.</p>"
+        if portfolio.get("auto_stop")
+        else ""
+    )
+    return f'<div class="stats">{stat_html}</div><h2>Positions</h2>{table}{note}'
 
 
 def _history_html(rows: list[st.Proposal]) -> str:

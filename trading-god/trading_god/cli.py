@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ def _desk():
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    from trading_god.desk import watch_stops
     from trading_god.web import create_app
 
     desk = _desk()
@@ -32,7 +34,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("web.host must be 127.0.0.1 or localhost: the desk page is for this computer only.", file=sys.stderr)
         return 2
     print(f"Trading God desk: http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(create_app(desk), host=host, port=port, log_level="warning")
+    stop = threading.Event()
+    if desk.settings.exits.auto_stop:
+        print("Stop-losses: sold automatically at market when hit during market hours.")
+        threading.Thread(target=watch_stops, args=(desk, stop), name="stop-watch", daemon=True).start()
+    try:
+        uvicorn.run(create_app(desk), host=host, port=port, log_level="warning")
+    finally:
+        stop.set()
     return 0
 
 
