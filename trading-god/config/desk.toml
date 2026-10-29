@@ -37,6 +37,14 @@ ttl_hours = 12              # an undecided proposal expires after this many hour
 auto_stop = true
 check_seconds = 60          # how often prices are checked
 retry_minutes = 30          # wait this long before retrying a failed automatic sell
+# Trailing stop: once a day the stop moves up to the highest close since the buy
+# minus this many average daily ranges (ATR), so a calm stock trails close and a
+# jumpy one gets room. It never moves down. 0 turns trailing off.
+trail_atr_multiple = 3.0
+trail_atr_days = 14
+# Only buys with one of these playbooks trail. Buffett, Lynch and Marks sell on the
+# thesis, not on price, so their buys keep the stop they were approved with.
+trail_playbooks = ["minervini-vcp", "oneil-canslim"]
 
 [web]
 host = "127.0.0.1"          # the desk page is for this computer only

@@ -135,14 +135,15 @@ def cmd_prompt(args: argparse.Namespace) -> int:
 
 
 def cmd_skills(args: argparse.Namespace) -> int:
-    from trading_god.setup_vibe import install_own_skills, vibe_home
+    from trading_god.setup_vibe import install_own_skills, refresh_desk_tools, vibe_home
 
     try:
         installed = install_own_skills(vibe_home() / "skills" / "user")
-    except (RuntimeError, OSError) as exc:
+        tools_changed = refresh_desk_tools(vibe_home() / "agent.json")
+    except (RuntimeError, OSError, ValueError) as exc:
         print(f"Could not refresh the skills: {exc}", file=sys.stderr)
         return 1
-    print(f"Refreshed {', '.join(installed)}.")
+    print(f"Refreshed {', '.join(installed)}." + (" Updated the agent's desk tools." if tools_changed else ""))
     return 0
 
 

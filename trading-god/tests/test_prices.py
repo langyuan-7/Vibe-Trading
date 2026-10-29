@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 
 import pandas as pd
 
-from trading_god.prices import yahoo_next_earnings, yahoo_ticker
+from trading_god.prices import Bar, yahoo_daily_bars, yahoo_next_earnings, yahoo_ticker
 
 TODAY = date(2026, 10, 27)
 
@@ -16,6 +16,10 @@ def fake_yfinance(monkeypatch, *, calendar=None, history=None):
         def __init__(self, symbol):
             asked.append(symbol)
             self.calendar = calendar
+
+        def history(self, **kwargs):
+            asked.append(kwargs)
+            return history
 
         def get_earnings_dates(self, limit=8):
             if isinstance(history, Exception):
@@ -51,3 +55,13 @@ def test_past_calendar_dates_fall_back_to_the_earnings_history(monkeypatch):
 def test_no_date_anywhere_is_unknown(monkeypatch):
     fake_yfinance(monkeypatch, calendar={}, history=RuntimeError("blocked"))
     assert yahoo_next_earnings("US.XOM", TODAY) is None
+
+
+def test_daily_bars_skip_broken_rows(monkeypatch):
+    index = pd.DatetimeIndex(
+        [datetime(2026, 10, 26, 4, tzinfo=timezone.utc), datetime(2026, 10, 27, 4, tzinfo=timezone.utc)]
+    )
+    frame = pd.DataFrame({"High": [101.0, float("nan")], "Low": [99.0, 98.0], "Close": [100.0, 99.0]}, index=index)
+    asked = fake_yfinance(monkeypatch, history=frame)
+    assert yahoo_daily_bars("US.BRK.B", TODAY) == [Bar(date(2026, 10, 26), 101.0, 99.0, 100.0)]
+    assert asked[0] == "BRK-B" and asked[1]["start"] == "2026-09-15" and asked[1]["auto_adjust"] is False

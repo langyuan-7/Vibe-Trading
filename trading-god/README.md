@@ -49,6 +49,12 @@ Vibe-Trading's loaders supply the data, and
   fill below the stop. The desk page and Telegram tell you when it happens, and
   `[exits] auto_stop = false` in `desk.toml` turns it off. The PC has to be awake with
   Trading God running: the stop is not an order waiting at moomoo.
+- **Stops only go up.** For Minervini and O'Neil buys, the desk trails the stop once a
+  day at the highest close since the buy minus 3 average daily ranges (ATR), so a calm
+  stock trails close and a jumpy one gets room. The agent can also raise a stop to a
+  level its playbook names, such as under a new higher base or the 50-day line, at
+  least 2% below the price. Nothing can lower a stop. Buffett, Lynch and Marks buys keep
+  the stop they were approved with; the morning scan judges them on the thesis.
 - **Hard limits, checked twice.** The desk checks each order when it is proposed, and
   again against the live account when you approve it. The defaults, as a share of
   equity:

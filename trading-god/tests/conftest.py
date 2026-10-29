@@ -124,13 +124,21 @@ def desk(make_desk) -> Desk:
     return make_desk()
 
 
-def buy(desk: Desk, symbol: str = "AAPL", quantity: int = 100, limit: float = 200.0, stop: float = 185.0, **extra: Any):
+def buy(
+    desk: Desk,
+    symbol: str = "AAPL",
+    quantity: int = 100,
+    limit: float = 200.0,
+    stop: float = 185.0,
+    playbook: str = "minervini-vcp + lynch-growth",
+    **extra: Any,
+):
     return desk.propose(
         symbol=symbol,
         side="buy",
         quantity=quantity,
         thesis="Breakout from a seven-week base on rising volume; wrong below the base low.",
-        playbook="minervini-vcp + lynch-growth",
+        playbook=playbook,
         limit_price=limit,
         stop_loss=stop,
         **extra,

@@ -8,6 +8,8 @@ before the order is sent to the paper account.
 One sell needs no approval: when a position's price falls to the stop of the buy
 a person approved, the desk sells it at market during market hours
 (``[exits] auto_stop``), because a stop that waits for someone is no stop.
+Stops only ever move up: the desk trails them behind the highest close, and the
+agent may raise one to a level its playbook names.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from trading_god import store as st
 from trading_god.broker import Account, BrokerError, MoomooPaperBroker
 from trading_god.config import Settings
-from trading_god.prices import EarningsLookup, PriceLookup
+from trading_god.prices import BarsLookup, EarningsLookup, PriceLookup
 from trading_god.risk import (
     AccountState,
     Check,
@@ -34,6 +36,7 @@ from trading_god.risk import (
     check_exit_plan,
     evaluate,
     normalize_symbol,
+    trailing_stop,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,8 @@ _MIN_THESIS = 30
 
 #: The playbook of a sell the desk placed itself because a stop was hit.
 AUTO_STOP = "auto-stop"
+#: The agent may not raise a stop closer than this to the last price.
+_MIN_STOP_ROOM_PCT = 2.0
 
 
 def utc_now() -> datetime:
@@ -164,6 +169,7 @@ class Desk:
         notifier: Notifier | None = None,
         clock: Callable[[], datetime] = utc_now,
         earnings: EarningsLookup | None = None,
+        bars: BarsLookup | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
@@ -173,6 +179,9 @@ class Desk:
         self.clock = clock
         self.earnings = earnings
         self._earnings_seen: dict[tuple[str, date], date | None] = {}
+        self.bars = bars
+        self._trailed: set[tuple[int, date]] = set()
+        self._trail_tried: dict[int, datetime] = {}
 
     # -- shared helpers ---------------------------------------------------
 
@@ -248,7 +257,13 @@ class Desk:
         limits = self.settings.risk
         equity = account.equity
         invested = state.invested
-        stops = self._stops()
+        buys = self._stops()
+        # Only held stocks: a closed position's stop needs no trailing.
+        stops = {
+            p.symbol: (buys[p.symbol], *self._stop_of(buys[p.symbol], now))
+            for p in account.positions
+            if p.symbol in buys
+        }
         return {
             "status": "ok",
             "paper_only": True,
@@ -271,8 +286,10 @@ class Desk:
                     "weight_pct": round(100.0 * p.market_value / equity, 2) if equity > 0 else None,
                     "cost_price": p.cost_price,
                     "pl_pct": p.pl_pct,
-                    "stop_loss": stops[p.symbol].stop_loss if p.symbol in stops else None,
-                    "stop_from_proposal": stops[p.symbol].id if p.symbol in stops else None,
+                    "stop_loss": stops[p.symbol][1] if p.symbol in stops else None,
+                    "stop_reason": stops[p.symbol][2] if p.symbol in stops else None,
+                    "initial_stop": stops[p.symbol][0].stop_loss if p.symbol in stops else None,
+                    "stop_from_proposal": stops[p.symbol][0].id if p.symbol in stops else None,
                 }
                 for p in account.positions
             ],
@@ -541,14 +558,97 @@ class Desk:
             quantity = int(position.sellable)
             if buy is None or quantity <= 0 or position.symbol in recent:
                 continue
+            stop, reason = self._stop_of(buy, now)
             price = self.prices(position.symbol)
-            if price is None or price > buy.stop_loss:
+            if price is None or price > stop:
                 continue
-            results.append(self._stop_out(buy, quantity, price, account, now))
+            results.append(self._stop_out(buy, stop, reason, quantity, price, account, now))
         return results
 
+    def _stop_of(self, buy: st.Proposal, now: datetime) -> tuple[float, str]:
+        """A placed buy's stop now, and where it came from. It never sits below the approved one."""
+        self._trail(buy, now)
+        raised = self.store.raised_stop(buy.id)
+        if raised and raised[0] > (buy.stop_loss or 0):
+            return raised
+        return float(buy.stop_loss or 0), "the stop approved with the buy"
+
+    def _trail(self, buy: st.Proposal, now: datetime) -> None:
+        """Once a day, raise the stop to the highest close since the buy minus N ATRs."""
+        exits = self.settings.exits
+        if self.bars is None or not exits.trails(buy.playbook):
+            return
+        today = us_date(now)
+        tried = self._trail_tried.get(buy.id)
+        if (buy.id, today) in self._trailed or (tried and now - tried < timedelta(minutes=30)):
+            return
+        self._trail_tried[buy.id] = now
+        since = us_date(datetime.fromisoformat(buy.decided_at or buy.created_at))
+        try:
+            bars = self.bars(buy.symbol, since)
+        except Exception as exc:  # noqa: BLE001 - keep the current stop and try again later
+            logger.info("daily bars for %s failed: %s", buy.symbol, exc)
+            return
+        self._trailed.add((buy.id, today))
+        found = trailing_stop(bars, since, today, exits.trail_atr_multiple, exits.trail_atr_days)
+        if found is None:
+            return
+        stop, high, atr = found
+        raised = self.store.raised_stop(buy.id)
+        if stop > max(buy.stop_loss or 0, raised[0] if raised else 0):
+            reason = f"trailing: highest close ${high:,.2f} minus {exits.trail_atr_multiple:g} x ATR ${atr:,.2f}"
+            self.store.raise_stop(buy.id, stop, reason, iso(now))
+
+    def raise_stop(self, *, symbol: str, stop: Any, reason: str) -> dict[str, Any]:
+        """Let the agent move a held position's stop up to a level its playbook names."""
+        now = self.clock()
+        reason = str(reason or "").strip()
+        try:
+            code = normalize_symbol(symbol)
+            new = _optional_float(stop, "stop")
+            if new is None:
+                raise ValueError("stop is required")
+            if len(reason) < 20:
+                raise ValueError(
+                    "reason must name the level the stop goes under, such as a base low or the 50-day line"
+                )
+        except ValueError as exc:
+            return {"status": "invalid", "error": str(exc)}
+        buy = self._stops().get(code)
+        if buy is None:
+            return {"status": "refused", "error": f"no buy of {code} was placed through the desk, so it has no stop"}
+        if not any(p.symbol == code and p.quantity > 0 for p in self.broker.account().positions):
+            return {"status": "refused", "error": f"{code} is not held"}
+        current, _ = self._stop_of(buy, now)
+        if new <= current:
+            return {
+                "status": "refused",
+                "error": f"${new:,.2f} is not above the current stop ${current:,.2f}; stops only go up",
+                "stop_loss": current,
+            }
+        price = self.prices(code)
+        if price is None:
+            return {"status": "error", "error": f"no current price for {code}"}
+        ceiling = round(price * (1 - _MIN_STOP_ROOM_PCT / 100.0), 2)
+        if new > ceiling:
+            return {
+                "status": "refused",
+                "error": f"${new:,.2f} is within {_MIN_STOP_ROOM_PCT:g}% of the last price ${price:,.2f}, so normal "
+                "noise would sell it; to exit now, propose a sell instead",
+                "last_price": price,
+            }
+        self.store.raise_stop(buy.id, new, f"raised by agent: {reason[:300]}", iso(now))
+        return {"status": "ok", "symbol": code, "stop_loss": new, "previous_stop": current, "last_price": price}
+
     def _stop_out(
-        self, buy: st.Proposal, quantity: int, price: float, account: Account, now: datetime
+        self,
+        buy: st.Proposal,
+        stop: float,
+        reason: str,
+        quantity: int,
+        price: float,
+        account: Account,
+        now: datetime,
     ) -> dict[str, Any]:
         for waiting in self.store.list([st.PENDING], limit=100):
             if waiting.symbol == buy.symbol:
@@ -559,7 +659,7 @@ class Desk:
         # A stop exits at market whatever desk.toml says about market buys.
         limits = replace(self.settings.risk, allow_market_orders=True)
         report = evaluate(order, price, self._state(account, now, include_pending=False), limits, include_pending=False)
-        why = f"last price ${price:,.2f} is at or below the ${buy.stop_loss:,.2f} stop of #{buy.id}"
+        why = f"last price ${price:,.2f} is at or below the ${stop:,.2f} stop of #{buy.id} ({reason})"
         proposal = self.store.add(
             created_at=iso(now),
             expires_at=iso(now + timedelta(hours=1)),
@@ -570,7 +670,7 @@ class Desk:
             order_type=order.order_type,
             ref_price=report.price,
             notional=report.notional,
-            thesis=f"Automatic stop-loss sell: {why}, which you approved with the buy.",
+            thesis=f"Automatic stop-loss sell: {why}.",
             playbook=AUTO_STOP,
             risk_report=report.to_dict(),
         )

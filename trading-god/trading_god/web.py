@@ -179,6 +179,11 @@ def _portfolio_html(portfolio: dict[str, Any]) -> str:
     for p in portfolio["positions"]:
         pl = "" if p["pl_pct"] is None else f"{p['pl_pct']:.1f}%"
         stop = "none" if p.get("stop_loss") is None else _money(p["stop_loss"])
+        reason = str(p.get("stop_reason") or "")
+        if reason.startswith("trailing"):
+            stop += f' <small title="{escape(reason)}">trailing</small>'
+        elif reason.startswith("raised"):
+            stop += f' <small title="{escape(reason)}">raised</small>'
         row_html.append(
             f"<tr><td>{escape(p['symbol'])}</td><td>{escape(p['name'])}</td><td>{p['quantity']:g}</td>"
             f"<td>{_money(p['market_value'])}</td><td>{(p['weight_pct'] or 0):.1f}%</td><td>{pl}</td>"
@@ -193,7 +198,8 @@ def _portfolio_html(portfolio: dict[str, Any]) -> str:
     )
     note = (
         '<p class="note">A position that falls to its stop in market hours is sold at market, '
-        "without asking. Positions bought outside the desk have no stop.</p>"
+        "without asking. Stops only move up: trailing ones follow the highest close. "
+        "Positions bought outside the desk have no stop.</p>"
         if portfolio.get("auto_stop")
         else ""
     )

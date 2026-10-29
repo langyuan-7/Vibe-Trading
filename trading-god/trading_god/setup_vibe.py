@@ -120,7 +120,7 @@ def env_updates(model: str, claude_path: str | None) -> dict[str, str]:
 
 #: The desk tools the agent may use. Listing them means a tool added to the
 #: server later stays hidden until someone adds it here on purpose.
-DESK_TOOLS = ["get_portfolio", "propose_order", "list_proposals", "withdraw_proposal"]
+DESK_TOOLS = ["get_portfolio", "propose_order", "list_proposals", "withdraw_proposal", "raise_stop"]
 
 #: OpenBB's discovery tools: search for a data tool, then run it through call_tool.
 #: This keeps hundreds of tool schemas out of every prompt.
@@ -170,6 +170,21 @@ def merge_agent_config(path: Path, servers: dict[str, dict[str, Any]]) -> dict[s
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return {"path": str(path), "changed": True, "backup": str(backup) if backup else None}
+
+
+def refresh_desk_tools(path: Path) -> bool:
+    """Bring the desk's tool list in ``agent.json`` up to date after a ``git pull``; True if it changed."""
+    if not path.exists():
+        return False
+    data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    servers = data.get("mcpServers") or data.get("mcp_servers") or {}
+    desk = servers.get("desk") if isinstance(servers, dict) else None
+    if not isinstance(desk, dict) or desk.get("enabledTools") == DESK_TOOLS:
+        return False
+    desk["enabledTools"] = list(DESK_TOOLS)
+    _backup(path)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return True
 
 
 def validate_agent_config(path: Path) -> str | None:

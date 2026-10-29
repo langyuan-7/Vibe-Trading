@@ -9,14 +9,25 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, datetime
-from typing import Any, Callable, Iterable
+from datetime import date, datetime, timedelta
+from typing import Any, Callable, Iterable, NamedTuple
 
 logger = logging.getLogger(__name__)
 
 PriceLookup = Callable[[str], "float | None"]
 #: ``(symbol, today) -> next earnings date on or after today``, or None if unknown.
 EarningsLookup = Callable[[str, date], "date | None"]
+
+
+class Bar(NamedTuple):
+    day: date
+    high: float
+    low: float
+    close: float
+
+
+#: ``(symbol, since) -> daily bars, oldest first``, from a few weeks before ``since``.
+BarsLookup = Callable[[str, date], "list[Bar]"]
 
 
 def yahoo_ticker(symbol: str) -> str:
@@ -95,3 +106,23 @@ def yahoo_next_earnings(symbol: str, today: date) -> date | None:
     except Exception as exc:  # noqa: BLE001
         logger.info("Yahoo earnings dates for %s failed: %s", symbol, exc)
     return None
+
+
+def yahoo_daily_bars(symbol: str, since: date) -> list[Bar]:
+    """Unadjusted daily bars from six weeks before ``since``, enough for a 14-day ATR."""
+    import yfinance as yf
+
+    frame = yf.Ticker(yahoo_ticker(symbol)).history(
+        start=(since - timedelta(days=42)).isoformat(), interval="1d", auto_adjust=False
+    )
+    bars = []
+    for stamp, row in frame.iterrows():
+        day = _as_date(stamp)
+        values = [row.get("High"), row.get("Low"), row.get("Close")]
+        try:
+            high, low, close = (float(v) for v in values)
+        except (TypeError, ValueError):
+            continue
+        if day is not None and all(math.isfinite(v) and v > 0 for v in (high, low, close)):
+            bars.append(Bar(day, high, low, close))
+    return bars

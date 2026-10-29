@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from conftest import buy
@@ -8,6 +8,8 @@ from trading_god import store as st
 from trading_god.broker import BrokerError
 from trading_god.config import ExitSettings, parse_settings
 from trading_god.desk import AUTO_STOP, us_session_open, watch_stops
+from trading_god.prices import Bar
+from trading_god.risk import average_true_range, trailing_stop
 
 
 @pytest.fixture
@@ -144,3 +146,158 @@ def test_desk_page_shows_the_stop(desk, held):
     page = TestClient(create_app(desk), base_url="http://127.0.0.1:8765").get("/").text
     assert "<th>Stop</th>" in page and "<td>$185.00</td>" in page
     assert "sold at market, without asking" in page
+
+
+# -- trailing and raised stops ---------------------------------------------------
+
+BUY_DAY = date(2026, 10, 27)
+
+
+def bars_from(closes, start=date(2026, 9, 1), spread=2.0):
+    """Daily bars on weekdays from ``start``, each 2 dollars from high to low."""
+    out, day = [], start
+    for close in closes:
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        out.append(Bar(day, close + spread / 2, close - spread / 2, close))
+        day += timedelta(days=1)
+    return out
+
+
+def test_atr_needs_enough_bars():
+    flat = bars_from([100.0] * 15)
+    assert average_true_range(flat, 14) == 2.0
+    assert average_true_range(flat[:14], 14) is None
+
+
+def test_trail_is_highest_close_since_the_buy_minus_atr_and_skips_today():
+    bars = bars_from([100.0] * 20 + [110.0, 120.0, 130.0], start=date(2026, 9, 1))
+    since, today = bars[20].day, bars[-1].day
+    stop, high, atr = trailing_stop(bars, since, today, 3.0, 14)
+    assert high == 120.0  # today's 130 close is not in yet
+    assert stop == round(120.0 - 3 * atr, 2)
+    assert trailing_stop(bars, since, today, 0, 14) is None
+
+
+@pytest.fixture
+def trend_desk(make_desk, broker, prices, clock):
+    """A Minervini buy of 100 AAPL at 200, stop 185, with daily bars on demand."""
+    desk = make_desk()
+    proposal_id = desk.propose(
+        symbol="AAPL",
+        side="buy",
+        quantity=100,
+        limit_price=200.0,
+        stop_loss=185.0,
+        thesis="Stage-2 leader breaking out of a tight VCP base on volume.",
+        playbook="minervini-vcp + lynch-growth",
+    )["proposal_id"]
+    desk.approve(proposal_id)
+    broker.hold("US.AAPL", 100, 20_000.0)
+    desk.bars_calls = []
+
+    def bars(symbol, since):
+        desk.bars_calls.append((symbol, since))
+        return desk.fake_bars
+
+    desk.bars = bars
+    desk.fake_bars = []
+    desk.buy_id = proposal_id
+    return desk
+
+
+def test_stop_trails_up_and_never_down(trend_desk, prices, clock):
+    # Fifteen calm days of history, then the stock runs from 200 to 240 after the buy.
+    history = bars_from([200.0] * 15, start=date(2026, 10, 6))
+    run = [Bar(BUY_DAY + timedelta(days=i), c + 1, c - 1, c) for i, c in enumerate([200.0, 220.0, 240.0], start=1)]
+    trend_desk.fake_bars = history + run
+    clock.now = datetime(2026, 11, 2, 15, 0, tzinfo=timezone.utc)  # Monday, after those closes
+    prices.prices["US.AAPL"] = 238.0
+    trail = round(240.0 - 3 * average_true_range(history + run, 14), 2)
+    (position,) = trend_desk.portfolio()["positions"]
+    assert 185.0 < position["stop_loss"] == trail
+    assert position["stop_reason"].startswith("trailing") and position["initial_stop"] == 185.0
+    # The next day the stock falls back; the trail does not come down with it.
+    trend_desk.fake_bars = history + run + [Bar(date(2026, 11, 2), 231.0, 229.0, 230.0)]
+    clock.now = datetime(2026, 11, 3, 15, 0, tzinfo=timezone.utc)
+    assert trend_desk.portfolio()["positions"][0]["stop_loss"] == trail
+
+
+def test_trailed_stop_is_what_the_watcher_sells_at(trend_desk, broker, prices, clock):
+    history = bars_from([238.0] * 15, start=date(2026, 10, 6))
+    trend_desk.fake_bars = history + [Bar(BUY_DAY + timedelta(days=1), 241.0, 239.0, 240.0)]
+    clock.now = datetime(2026, 10, 29, 15, 0, tzinfo=timezone.utc)
+    # ATR is 2.2, so the trail is 240 - 6.6 = 233.40: sell at 233, far above the 185 start.
+    prices.prices["US.AAPL"] = 233.0
+    (result,) = trend_desk.check_stops()
+    assert result["status"] == st.PLACED
+    assert "trailing" in trend_desk.store.get(result["proposal_id"]).decision_note
+
+
+def test_bars_are_fetched_once_a_day(trend_desk, clock):
+    trend_desk.fake_bars = bars_from([200.0] * 20, start=date(2026, 10, 1))
+    trend_desk.portfolio()
+    clock.advance(minutes=45)
+    trend_desk.portfolio()
+    assert len(trend_desk.bars_calls) == 1
+    clock.advance(days=1)
+    trend_desk.portfolio()
+    assert len(trend_desk.bars_calls) == 2
+
+
+def test_failed_bar_lookup_keeps_the_stop_and_retries_later(trend_desk, clock):
+    def broken(symbol, since):
+        trend_desk.bars_calls.append(symbol)
+        raise RuntimeError("Yahoo is down")
+
+    trend_desk.bars = broken
+    assert trend_desk.portfolio()["positions"][0]["stop_loss"] == 185.0
+    clock.advance(minutes=5)
+    trend_desk.portfolio()
+    clock.advance(minutes=31)
+    trend_desk.portfolio()
+    assert len(trend_desk.bars_calls) == 2
+
+
+def test_thesis_playbooks_do_not_trail(desk, broker):
+    proposal_id = buy(desk, playbook="buffett + lynch-growth")["proposal_id"]
+    desk.approve(proposal_id)
+    broker.hold("US.AAPL", 100, 20_000.0)
+    desk.bars = lambda symbol, since: pytest.fail("a buffett + lynch buy must not fetch bars")
+    (position,) = desk.portfolio()["positions"]
+    assert position["stop_loss"] == 185.0
+
+
+def test_agent_can_raise_a_stop_but_never_lower_it(trend_desk, prices):
+    prices.prices["US.AAPL"] = 220.0
+    raised = trend_desk.raise_stop(symbol="AAPL", stop=205.0, reason="under the new higher base low, minervini-vcp")
+    assert (raised["status"], raised["stop_loss"], raised["previous_stop"]) == ("ok", 205.0, 185.0)
+    lower = trend_desk.raise_stop(symbol="AAPL", stop=195.0, reason="under the 50-day line, minervini-vcp rule")
+    assert lower["status"] == "refused" and "only go up" in lower["error"]
+    assert trend_desk.portfolio()["positions"][0]["stop_reason"].startswith("raised by agent")
+
+
+def test_raised_stop_must_leave_room_under_the_price(trend_desk, prices):
+    prices.prices["US.AAPL"] = 220.0
+    close = trend_desk.raise_stop(symbol="AAPL", stop=216.0, reason="under yesterday's low, minervini-vcp rule")
+    assert close["status"] == "refused" and "2%" in close["error"]
+    assert (
+        trend_desk.raise_stop(symbol="AAPL", stop=215.6, reason="under the pivot, minervini-vcp rule")["status"] == "ok"
+    )
+
+
+def test_raise_stop_needs_a_desk_position_and_a_reason(trend_desk, desk, broker):
+    assert trend_desk.raise_stop(symbol="AAPL", stop=190.0, reason="because")["status"] == "invalid"
+    assert (
+        trend_desk.raise_stop(symbol="NVDA", stop=140.0, reason="under the new base low, minervini")["status"]
+        == "refused"
+    )
+    broker.positions.clear()
+    gone = trend_desk.raise_stop(symbol="AAPL", stop=190.0, reason="under the new base low, minervini-vcp")
+    assert gone["status"] == "refused" and "not held" in gone["error"]
+
+
+def test_sold_positions_are_not_trailed(trend_desk, broker):
+    broker.positions.clear()
+    assert trend_desk.portfolio()["positions"] == []
+    assert trend_desk.bars_calls == []
