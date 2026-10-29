@@ -66,12 +66,28 @@ class ExitSettings:
     check_seconds: int = 60
     #: Wait this long before trying again after an automatic sell for the same stock.
     retry_minutes: int = 30
+    #: Trail the stop at the highest close since the buy minus this many ATRs; 0 turns it off.
+    trail_atr_multiple: float = 3.0
+    #: Days in the average true range.
+    trail_atr_days: int = 14
+    #: Buys whose playbook names one of these trail. Buffett, Lynch and Marks sell on the
+    #: thesis, not on price, so their buys keep the stop they were approved with.
+    trail_playbooks: tuple[str, ...] = ("minervini-vcp", "oneil-canslim")
 
     def __post_init__(self) -> None:
         if self.check_seconds < 10:
             raise ValueError("exits.check_seconds must be at least 10")
         if self.retry_minutes < 1:
             raise ValueError("exits.retry_minutes must be at least 1")
+        if self.trail_atr_multiple < 0:
+            raise ValueError("exits.trail_atr_multiple must be 0 (off) or more")
+        if self.trail_atr_days < 2:
+            raise ValueError("exits.trail_atr_days must be at least 2")
+        object.__setattr__(self, "trail_playbooks", tuple(p.strip().lower() for p in self.trail_playbooks if p.strip()))
+
+    def trails(self, playbook: str) -> bool:
+        named = str(playbook or "").lower()
+        return self.trail_atr_multiple > 0 and any(p in named for p in self.trail_playbooks)
 
 
 @dataclass(frozen=True)

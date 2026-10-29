@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS proposals (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS proposals_status ON proposals (status);
+CREATE TABLE IF NOT EXISTS stops (
+    proposal_id INTEGER PRIMARY KEY REFERENCES proposals (id),
+    stop REAL NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -204,6 +210,23 @@ class ProposalStore:
         params.extend([proposal_id, PLACING])
         with closing(self._connect()) as conn, conn:
             conn.execute(f"UPDATE proposals SET {', '.join(assignments)} WHERE id = ? AND status = ?", params)
+
+    def raised_stop(self, proposal_id: int) -> tuple[float, str] | None:
+        """The stop a placed buy has been raised to, and why, if it was raised."""
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT stop, reason FROM stops WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return (float(row["stop"]), str(row["reason"])) if row else None
+
+    def raise_stop(self, proposal_id: int, stop: float, reason: str, now_iso: str) -> bool:
+        """Raise a buy's stop; a stop below the current one is ignored, so stops only go up."""
+        with closing(self._connect()) as conn, conn:
+            cursor = conn.execute(
+                "INSERT INTO stops (proposal_id, stop, reason, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (proposal_id) DO UPDATE SET stop = excluded.stop, reason = excluded.reason, "
+                "updated_at = excluded.updated_at WHERE excluded.stop > stops.stop",
+                (proposal_id, float(stop), reason, now_iso),
+            )
+            return cursor.rowcount == 1
 
     def expire(self, now_iso: str) -> int:
         with closing(self._connect()) as conn, conn:

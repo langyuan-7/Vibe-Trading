@@ -394,3 +394,31 @@ def evaluate(
         )
 
     return RiskReport(tuple(checks), last_price, notional)
+
+
+def average_true_range(bars: list, days: int) -> float | None:
+    """Mean true range of the last ``days`` bars (each needs high, low and close), or None."""
+    if len(bars) < days + 1:
+        return None
+    ranges = []
+    for previous, bar in zip(bars[-days - 1 : -1], bars[-days:]):
+        ranges.append(max(bar.high - bar.low, abs(bar.high - previous.close), abs(bar.low - previous.close)))
+    return sum(ranges) / days
+
+
+def trailing_stop(
+    bars: list, since: date, today: date, multiple: float, days: int
+) -> tuple[float, float, float] | None:
+    """``(stop, highest close, ATR)`` for a position bought on ``since``, from bars before ``today``.
+
+    The stop is the highest close since the buy minus ``multiple`` average true
+    ranges: a calm stock gets a close trail, a jumpy one gets room. Today's bar is
+    left out until it closes, so the stop holds still through the session.
+    """
+    done = [bar for bar in bars if bar.day < today]
+    held = [bar.close for bar in done if bar.day >= since]
+    atr = average_true_range(done, days)
+    if not held or atr is None or multiple <= 0:
+        return None
+    high = max(held)
+    return round(high - multiple * atr, 2), high, atr

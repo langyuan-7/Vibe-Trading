@@ -202,3 +202,15 @@ def test_claude_script_shims_are_swapped_for_the_native_exe(tmp_path, monkeypatc
     (npm / "claude.exe").write_text("", encoding="utf-8")
     assert runnable_claude(str(npm / "claude.ps1")) == str(npm / "claude.exe")
     assert runnable_claude("/usr/local/bin/claude") == "/usr/local/bin/claude"
+
+
+def test_refreshing_skills_adds_new_desk_tools_to_agent_json(tmp_path):
+    path = tmp_path / "agent.json"
+    old = {"mcpServers": {"desk": {"command": "py", "enabledTools": ["get_portfolio"]}, "other": {"url": "x"}}}
+    path.write_text(json.dumps(old), encoding="utf-8")
+    assert setup_vibe.refresh_desk_tools(path) is True
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["mcpServers"]["desk"]["enabledTools"] == setup_vibe.DESK_TOOLS
+    assert data["mcpServers"]["other"] == {"url": "x"} and data["mcpServers"]["desk"]["command"] == "py"
+    assert setup_vibe.refresh_desk_tools(path) is False
+    assert setup_vibe.refresh_desk_tools(tmp_path / "missing.json") is False

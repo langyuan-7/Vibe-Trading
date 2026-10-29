@@ -25,6 +25,8 @@ INSTRUCTIONS = (
     "Trading God approval desk for a moomoo PAPER trading account (US stocks and ETFs only). "
     "You can read the portfolio, propose orders and read back past proposals with the person's decisions. "
     "You cannot place, approve or cancel orders: a person approves every proposal. "
+    "The desk itself sells a position at market when its stop is hit in market hours, and trails some stops; "
+    "you may raise a stop with raise_stop, never lower it. "
     "A proposal is not a trade; only list_proposals showing status 'placed' means an order was sent."
 )
 
@@ -123,6 +125,22 @@ def withdraw_proposal(
 ) -> dict[str, Any]:
     """Take back one of your pending proposals before a person decides on it."""
     return _safely(lambda: _get_desk().withdraw(proposal_id, reason))
+
+
+@server.tool()
+def raise_stop(
+    symbol: Annotated[str, Field(description="A held stock that was bought through the desk, e.g. MA")],
+    stop: Annotated[float, Field(gt=0, description="The new stop: above the current one, below the last price")],
+    reason: Annotated[
+        str,
+        Field(
+            description="The level it goes under and the playbook rule, e.g. 'under the new base low, minervini-vcp'"
+        ),
+    ],
+) -> dict[str, Any]:
+    """Move a position's stop up to a level your playbook names, such as a higher base low or the 50-day line.
+    Stops only go up; at least 2% below the last price. The desk sells at market if the price reaches it."""
+    return _safely(lambda: _get_desk().raise_stop(symbol=symbol, stop=stop, reason=reason))
 
 
 def _private_stdin() -> io.TextIOWrapper:
