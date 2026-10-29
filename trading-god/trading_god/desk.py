@@ -4,12 +4,18 @@ The agent can read the portfolio, propose an order and read back decisions.
 Only a person, through the desk page or the ``tg-desk`` command, can approve a
 proposal, and approval re-runs every risk check against fresh account state
 before the order is sent to the paper account.
+
+One sell needs no approval: when a position's price falls to the stop of the buy
+a person approved, the desk sells it at market during market hours
+(``[exits] auto_stop``), because a stop that waits for someone is no stop.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import threading
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -37,6 +43,9 @@ Notifier = Callable[[str], None]
 _MAX_THESIS = 4000
 _MIN_THESIS = 30
 
+#: The playbook of a sell the desk placed itself because a stop was hit.
+AUTO_STOP = "auto-stop"
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -63,6 +72,15 @@ def us_date(moment: datetime) -> date:
         return moment.astimezone(ZoneInfo("America/New_York")).date()
     except ZoneInfoNotFoundError:
         return moment.astimezone(timezone.utc).date()
+
+
+def us_session_open(moment: datetime) -> bool:
+    """Regular US hours, 9:30 to 16:00 New York on a weekday. Exchange holidays are not known."""
+    try:
+        local = moment.astimezone(ZoneInfo("America/New_York"))
+    except ZoneInfoNotFoundError:  # cannot tell the session, so never sell on a guess
+        return False
+    return local.weekday() < 5 and time(9, 30) <= local.time() < time(16, 0)
 
 
 def proposal_expiry(now: datetime, ttl_hours: float) -> datetime:
@@ -230,6 +248,7 @@ class Desk:
         limits = self.settings.risk
         equity = account.equity
         invested = state.invested
+        stops = self._stops()
         return {
             "status": "ok",
             "paper_only": True,
@@ -252,9 +271,12 @@ class Desk:
                     "weight_pct": round(100.0 * p.market_value / equity, 2) if equity > 0 else None,
                     "cost_price": p.cost_price,
                     "pl_pct": p.pl_pct,
+                    "stop_loss": stops[p.symbol].stop_loss if p.symbol in stops else None,
+                    "stop_from_proposal": stops[p.symbol].id if p.symbol in stops else None,
                 }
                 for p in account.positions
             ],
+            "auto_stop": self.settings.exits.auto_stop,
             "limits": {
                 "max_order_usd": round(equity * limits.max_order_pct / 100.0, 2),
                 "max_position_usd": round(equity * limits.max_position_pct / 100.0, 2),
@@ -484,3 +506,113 @@ class Desk:
             "status": "unchanged",
             "error": f"proposal #{proposal_id} is {found.status if found else 'missing'}, not pending",
         }
+
+    # -- what the desk does on its own --------------------------------------
+
+    def _stops(self) -> dict[str, st.Proposal]:
+        """The latest placed buy with a stop, per symbol: the stop a person approved."""
+        stops: dict[str, st.Proposal] = {}
+        for p in self.store.list([st.PLACED], limit=500):
+            if p.side == "buy" and p.stop_loss and p.symbol not in stops:
+                stops[p.symbol] = p
+        return stops
+
+    def check_stops(self) -> list[dict[str, Any]]:
+        """Sell, at market, every position whose price is at or below its stop.
+
+        Runs only in regular market hours. Shares already in an open sell order are
+        not sellable, so a sell that is still working is not sent twice.
+        """
+        exits = self.settings.exits
+        now = self.clock()
+        if not exits.auto_stop or not us_session_open(now):
+            return []
+        stops = self._stops()
+        if not stops:
+            return []
+        account = self.broker.account()
+        since = iso(now - timedelta(minutes=exits.retry_minutes))
+        recent = {
+            p.symbol for p in self.store.list(None, limit=200) if p.playbook == AUTO_STOP and p.created_at >= since
+        }
+        results = []
+        for position in account.positions:
+            buy = stops.get(position.symbol)
+            quantity = int(position.sellable)
+            if buy is None or quantity <= 0 or position.symbol in recent:
+                continue
+            price = self.prices(position.symbol)
+            if price is None or price > buy.stop_loss:
+                continue
+            results.append(self._stop_out(buy, quantity, price, account, now))
+        return results
+
+    def _stop_out(
+        self, buy: st.Proposal, quantity: int, price: float, account: Account, now: datetime
+    ) -> dict[str, Any]:
+        for waiting in self.store.list([st.PENDING], limit=100):
+            if waiting.symbol == buy.symbol:
+                self.store.decide(
+                    waiting.id, st.WITHDRAWN, iso(now), "withdrawn: the stop was hit and the desk sold the position"
+                )
+        order = OrderRequest(symbol=buy.symbol, side="sell", quantity=quantity, order_type="market")
+        # A stop exits at market whatever desk.toml says about market buys.
+        limits = replace(self.settings.risk, allow_market_orders=True)
+        report = evaluate(order, price, self._state(account, now, include_pending=False), limits, include_pending=False)
+        why = f"last price ${price:,.2f} is at or below the ${buy.stop_loss:,.2f} stop of #{buy.id}"
+        proposal = self.store.add(
+            created_at=iso(now),
+            expires_at=iso(now + timedelta(hours=1)),
+            status=st.PENDING,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+            order_type=order.order_type,
+            ref_price=report.price,
+            notional=report.notional,
+            thesis=f"Automatic stop-loss sell: {why}, which you approved with the buy.",
+            playbook=AUTO_STOP,
+            risk_report=report.to_dict(),
+        )
+        if not self.store.claim(proposal.id, iso(now), f"automatic stop-loss: {why}"):
+            return {"status": "unchanged", "proposal_id": proposal.id, "symbol": order.symbol}
+        result: dict[str, Any] = {"proposal_id": proposal.id, "symbol": order.symbol, "quantity": quantity}
+        if not report.passed:
+            problems = "; ".join(f"{c.name}: {c.detail}" for c in report.failures())
+            self.store.finish(proposal.id, st.BLOCKED, error=problems)
+            result.update(status=st.BLOCKED, error=problems)
+        else:
+            try:
+                placed = self.broker.place_order(order, remark=f"trading-god #{proposal.id} stop")
+            except Exception as exc:  # noqa: BLE001 - recorded, retried after exits.retry_minutes
+                self.store.finish(proposal.id, st.FAILED, error=str(exc))
+                result.update(status=st.FAILED, error=str(exc))
+            else:
+                self.store.finish(proposal.id, st.PLACED, broker_order_id=placed["order_id"], broker_response=placed)
+                result.update(status=st.PLACED, order_id=placed["order_id"])
+        if result["status"] == st.PLACED:
+            self._notify(
+                f"Trading God (paper) STOP HIT: sold {quantity} {order.symbol} at market, {why}. "
+                f"No approval was needed. #{proposal.id}"
+            )
+        else:
+            self._notify(
+                f"Trading God (paper) STOP HIT on {order.symbol}, but the sell did not go through: "
+                f"{result['error']}. Sell it in moomoo. #{proposal.id}"
+            )
+        return result
+
+
+def watch_stops(desk: Desk, stop: threading.Event, report: Callable[[str], None] = print) -> None:
+    """Check stops every ``exits.check_seconds`` until ``stop`` is set."""
+    while not stop.wait(desk.settings.exits.check_seconds):
+        try:
+            for result in desk.check_stops():
+                report(
+                    f"{iso(desk.clock())} stop-loss {result.get('symbol')}: {result.get('status')} "
+                    f"#{result.get('proposal_id')} {result.get('error', '')}".rstrip()
+                )
+        except BrokerError as exc:
+            logger.info("stop check skipped: %s", exc)
+        except Exception:  # noqa: BLE001 - the watcher must outlive one bad check
+            logger.exception("stop check failed")

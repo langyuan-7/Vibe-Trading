@@ -88,11 +88,15 @@ which steps did not run.
    `take_profit`. If the desk refuses a proposal, read why. You may fix a real mistake,
    such as a stale price, or resize the order to fit a limit. Never split one idea into
    several orders, and do not retry a symbol more than once.
-9. **Exits.** For each open position, find the proposal that opened it
-   (`mcp_desk_list_proposals` with status `placed`) and compare the last price with its
-   stop and target. Propose a limit sell near the last price when the stop is broken,
-   the target is reached, or the thesis has failed, and say which. Sells do not count
-   against the daily buy limit.
+9. **Exits.** `mcp_desk_get_portfolio` shows each position's `stop_loss`. When
+   `auto_stop` is true, the desk sells a position at market by itself once its price
+   reaches the stop in market hours, so do not propose a sell only because a stop is
+   near or broken. Sells with playbook `auto-stop` in the history are those. For each
+   open position, compare the last price with the target of the proposal that opened it
+   (`mcp_desk_list_proposals` with status `placed`). Propose a limit sell near the last
+   price when the target is reached or the thesis has failed, and say which. A position
+   with no `stop_loss` was bought outside the desk and has no automatic stop, so review
+   it the same way. Sells do not count against the daily buy limit.
 10. **Learn.** When a decision note or a result teaches something new, save one short
     lesson with `remember` (action `save`, memory_type `feedback`, title starting with
     `trading-god lessons:`). Save the lesson, not prices or trade lists.

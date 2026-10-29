@@ -29,12 +29,21 @@ earnings_blackout_days = 5  # no new buy when earnings are this many trading day
 ttl_hours = 12              # an undecided proposal expires after this many hours, but never
                             # before the next US market close, so evening scans last into the session
 
+[exits]
+# A stop that waits for you is no stop. While the desk runs, it checks every
+# position bought through it against that buy's stop, and in market hours sells
+# it at market, without asking, once the price is at or below the stop. A gap
+# down can fill below the stop. Set auto_stop = false to approve those sells too.
+auto_stop = true
+check_seconds = 60          # how often prices are checked
+retry_minutes = 30          # wait this long before retrying a failed automatic sell
+
 [web]
 host = "127.0.0.1"          # the desk page is for this computer only
 port = 8765
 
 [telegram]
-# Optional: get a phone message when a proposal is waiting. Create a bot with
+# Optional: get a phone message when a proposal is waiting or a stop was sold. Create a bot with
 # @BotFather, send it a message, then put its token and your chat id here.
 bot_token = ""
 chat_id = ""

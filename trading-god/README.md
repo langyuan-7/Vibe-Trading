@@ -41,8 +41,14 @@ Vibe-Trading's loaders supply the data, and
 - **Paper only.** The adapter sends every order with `TrdEnv.SIMULATE`, picks its
   account only from OpenD's paper accounts, and never calls `unlock_trade`, which a
   live order needs. A test fails if that code changes.
-- **A person approves every order.** The agent can only propose. Vibe-Trading's own
-  broker tools (`trading_*`) are hidden from the model.
+- **A person approves every order, except a stop.** The agent can only propose.
+  Vibe-Trading's own broker tools (`trading_*`) are hidden from the model. The one
+  order nobody approves is the stop-loss sell: while the desk runs, it checks every
+  position bought through it once a minute, and in market hours sells it at market as
+  soon as the price is at or below the stop you approved with the buy. A gap down can
+  fill below the stop. The desk page and Telegram tell you when it happens, and
+  `[exits] auto_stop = false` in `desk.toml` turns it off. The PC has to be awake with
+  Trading God running: the stop is not an order waiting at moomoo.
 - **Hard limits, checked twice.** The desk checks each order when it is proposed, and
   again against the live account when you approve it. The defaults, as a share of
   equity:

@@ -57,6 +57,24 @@ class ProposalSettings:
 
 
 @dataclass(frozen=True)
+class ExitSettings:
+    """Selling at a stop without asking: the stop was part of the buy a person approved."""
+
+    #: Sell a position at market as soon as its price is at or below its stop, in market hours.
+    auto_stop: bool = True
+    #: How often the desk checks prices against stops while it runs.
+    check_seconds: int = 60
+    #: Wait this long before trying again after an automatic sell for the same stock.
+    retry_minutes: int = 30
+
+    def __post_init__(self) -> None:
+        if self.check_seconds < 10:
+            raise ValueError("exits.check_seconds must be at least 10")
+        if self.retry_minutes < 1:
+            raise ValueError("exits.retry_minutes must be at least 1")
+
+
+@dataclass(frozen=True)
 class WebSettings:
     host: str = "127.0.0.1"
     port: int = 8765
@@ -85,6 +103,7 @@ class Settings:
     moomoo: MoomooSettings = field(default_factory=MoomooSettings)
     risk: RiskLimits = field(default_factory=RiskLimits)
     proposals: ProposalSettings = field(default_factory=ProposalSettings)
+    exits: ExitSettings = field(default_factory=ExitSettings)
     web: WebSettings = field(default_factory=WebSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     schedule: ScheduleSettings = field(default_factory=ScheduleSettings)
@@ -94,6 +113,7 @@ _SECTIONS = {
     "moomoo": MoomooSettings,
     "risk": RiskLimits,
     "proposals": ProposalSettings,
+    "exits": ExitSettings,
     "web": WebSettings,
     "telegram": TelegramSettings,
     "schedule": ScheduleSettings,
