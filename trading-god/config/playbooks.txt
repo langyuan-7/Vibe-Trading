@@ -10,3 +10,6 @@ minervini-vcp
 # Business quality checks for longer holds (months to years).
 buffett
 lynch-growth
+# Swing trades (2 to 10 trading days): box and pivot breakouts with a fixed exit plan.
+darvas-box
+livermore

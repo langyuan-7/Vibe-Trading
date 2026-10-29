@@ -46,6 +46,16 @@ trail_atr_days = 14
 # thesis, not on price, so their buys keep the stop they were approved with.
 trail_playbooks = ["minervini-vcp", "oneil-canslim"]
 
+[swing]
+# A swing buy (one the agent gives max_hold_days) carries its whole exit plan: a
+# stop, a target and a last day. Approving the buy approves all three, and while
+# the desk runs it sells at market, without asking, at whichever comes first.
+min_hold_days = 2
+max_hold_days = 10
+min_reward_risk = 1.5       # the target must be this many times the distance to the stop
+auto_target = true          # false: the agent proposes the target sell for you to approve
+auto_time_exit = true       # false: same for the last day; otherwise it sells from 15:45 New York
+
 [web]
 host = "127.0.0.1"          # the desk page is for this computer only
 port = 8765

@@ -82,6 +82,13 @@ def propose_order(
     take_profit: Annotated[float | None, Field(description="Optional target price, above entry for buys")] = None,
     time_horizon: Annotated[str, Field(description="e.g. 'days-weeks' or '6-12 months'")] = "",
     confidence: Literal["low", "medium", "high"] | None = None,
+    max_hold_days: Annotated[
+        int | None,
+        Field(
+            description="Swing buys only: sell after this many trading days (see portfolio swing limits). "
+            "Needs take_profit; the desk then sells by itself at the stop, the target or the last day"
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """Queue one order for a person to approve. The desk checks it against the hard limits first and
     returns the problems if it fails. Nothing is placed until a person approves it."""
@@ -98,6 +105,7 @@ def propose_order(
             take_profit=take_profit,
             horizon=time_horizon,
             confidence=confidence or "",
+            max_hold_days=max_hold_days,
         )
     )
 

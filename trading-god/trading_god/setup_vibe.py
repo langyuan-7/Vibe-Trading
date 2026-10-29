@@ -16,7 +16,7 @@ import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from trading_god.config import SKILLS_DIR, TEMPLATE_DIR, home_dir
 
@@ -297,22 +297,43 @@ def install_own_skills(user_skills: Path) -> list[str]:
     return installed
 
 
+def _install_playbook(user_skills: Path, name: str, investorskills: Path) -> None:
+    source = investorskills / "skills" / name
+    if not (source / "SKILL.md").is_file():
+        raise RuntimeError(f"playbook {name!r} is not in investorskills (see config/playbooks.txt)")
+    invest = source / "invest.md"
+    text = playbook_skill(
+        (source / "SKILL.md").read_text(encoding="utf-8"),
+        invest.read_text(encoding="utf-8") if invest.is_file() else None,
+        "github.com/langyuan-7/investorskills",
+    )
+    dest = user_skills / name
+    _replace_managed(dest)
+    (dest / "SKILL.md").write_text(text, encoding="utf-8")
+
+
+def install_missing_playbooks(
+    user_skills: Path,
+    playbooks: list[str] | None = None,
+    download: Callable[[Path], Path] = download_investorskills,
+) -> list[str]:
+    """Install playbooks added to ``playbooks.txt`` since setup; download only when one is missing."""
+    playbooks = read_playbook_list() if playbooks is None else playbooks
+    missing = [name for name in playbooks if not (user_skills / name / "SKILL.md").is_file()]
+    if not missing:
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        investorskills = download(Path(tmp))
+        for name in missing:
+            _install_playbook(user_skills, name, investorskills)
+    return missing
+
+
 def install_skills(user_skills: Path, playbooks: list[str], investorskills: Path) -> list[str]:
     """Copy our own skills and the chosen playbooks; drop managed playbooks no longer chosen."""
     installed = install_own_skills(user_skills)
     for name in playbooks:
-        source = investorskills / "skills" / name
-        if not (source / "SKILL.md").is_file():
-            raise RuntimeError(f"playbook {name!r} is not in investorskills (see config/playbooks.txt)")
-        invest = source / "invest.md"
-        text = playbook_skill(
-            (source / "SKILL.md").read_text(encoding="utf-8"),
-            invest.read_text(encoding="utf-8") if invest.is_file() else None,
-            "github.com/langyuan-7/investorskills",
-        )
-        dest = user_skills / name
-        _replace_managed(dest)
-        (dest / "SKILL.md").write_text(text, encoding="utf-8")
+        _install_playbook(user_skills, name, investorskills)
         installed.append(name)
     for folder in user_skills.iterdir():
         if folder.is_dir() and (folder / MANAGED_MARKER).exists() and folder.name not in installed:

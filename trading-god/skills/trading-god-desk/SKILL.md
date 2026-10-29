@@ -24,7 +24,7 @@ sells at a hit stop on its own (step 9).
   parameters that the search returned. If OpenBB is unavailable, use the other tools
   and say so in the report.
 - Playbooks, through `load_skill`: `marks-cycles`, `oneil-canslim`, `minervini-vcp`,
-  `buffett`, `lynch-growth`.
+  `buffett`, `lynch-growth`, and for swing trades `darvas-box` and `livermore`.
 - Memory: `remember`.
 
 ## Budget
@@ -55,6 +55,8 @@ which steps did not run.
 4. **Shortlist.** From the watch list, keep stocks above $5 that are in an uptrend
    (price above SMA 50 and SMA 200, with SMA 50 above SMA 200), or that have a clear
    value case. Keep at most five. Skip any symbol that already has a pending proposal.
+   Swing candidates are uptrend stocks near their highs that sit in a tight box or at a
+   pivot, ready to break out within days.
 5. **Evidence.** For each shortlisted stock, gather the following, with the calls for
    all of them in one or two replies:
    - daily prices for the last three months from `get_market_data`, one call with every
@@ -68,9 +70,12 @@ which steps did not run.
 6. **Two lenses.** Load the primary playbook that fits the setup and follow its process:
    - `minervini-vcp` or `oneil-canslim` for breakouts and momentum (days to weeks)
    - `buffett` or `lynch-growth` for quality at a fair price (months)
-   Then test the idea with one playbook from the other style. Propose only when the
-   primary says buy and the second does not say avoid. Name both in `playbook`, for
-   example `minervini-vcp + lynch-growth`.
+   - `darvas-box` or `livermore` for a swing trade: a box or pivot breakout held 2 to 10
+     trading days
+   Then test the idea with one playbook from the other style; for a swing, the second is
+   `minervini-vcp` or `oneil-canslim`, which checks that the trend is sound. Propose only
+   when the primary says buy and the second does not say avoid. Name both in
+   `playbook`, for example `minervini-vcp + lynch-growth` or `darvas-box + oneil-canslim`.
 7. **Entry, stop and size.**
    - Entry: a limit price within 2% of the last price, at or just above the pivot for a
      breakout. Do not chase a stock more than 5% above its pivot.
@@ -79,6 +84,16 @@ which steps did not run.
    - Size: risk about 0.5% of equity per idea, so shares = 0.005 × equity ÷ (entry − stop),
      rounded down. Then cut it to fit `limits.max_order_usd` and `limits.max_position_usd`.
      Use half size in a mixed market.
+   - Swing trades (`darvas-box` or `livermore` primary) also need the whole exit plan,
+     within the limits in the portfolio's `swing` section:
+     - entry at or just above the box top or pivot; stop under the box low, 3% to 8% below
+       entry
+     - `take_profit` at least `swing.min_reward_risk` times the distance to the stop,
+       such as the box height added to the breakout level
+     - `max_hold_days` of 2 to 10 trading days, usually 5, for how long the move should
+       take
+     The desk sells a swing by itself at the stop, at the target, or near the close of
+     its last day, so the person approves the whole plan with the buy.
    - Earnings within five trading days: do not propose a new buy. The desk looks the date
      up itself and refuses such buys, so check the date before proposing rather than after.
      When the desk says no date was found, put the date you found, or "unknown", in the thesis.
@@ -86,7 +101,8 @@ which steps did not run.
    limit. Use a limit order. The thesis has under 150 words: the setup, two to four key
    numbers with their dates, both playbook verdicts, and what would prove it wrong. Set
    `stop_loss`, `time_horizon`, `confidence` and, if the playbook gives one,
-   `take_profit`. If the desk refuses a proposal, read why. You may fix a real mistake,
+   `take_profit`. For a swing, also set `max_hold_days` and `take_profit`, with
+   `time_horizon` `swing`. If the desk refuses a proposal, read why. You may fix a real mistake,
    such as a stale price, or resize the order to fit a limit. Never split one idea into
    several orders, and do not retry a symbol more than once.
 9. **Exits.** `mcp_desk_get_portfolio` shows each position's current `stop_loss` and
@@ -101,6 +117,9 @@ which steps did not run.
      price. Never use it to sell: to exit now, propose a sell.
    - Buffett, Lynch and Marks positions are judged on the thesis, not on price: do not
      raise their stops to lock in gains.
+   - A swing position shows its `target` and `sell_by` day; the desk sells it at either.
+     When a higher box forms, raise its stop under the new box low (`darvas-box`). When
+     a swing breakout fails, closing back inside the box, propose a sell.
    For each open position, compare the last price with the target of the proposal that
    opened it (`mcp_desk_list_proposals` with status `placed`). Propose a limit sell near
    the last price when the target is reached or the thesis has failed, and say which. A

@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS proposals (
     decision_note TEXT NOT NULL DEFAULT '',
     broker_order_id TEXT,
     broker_response TEXT,
-    error TEXT
+    error TEXT,
+    max_hold_days INTEGER
 );
 CREATE INDEX IF NOT EXISTS proposals_status ON proposals (status);
 CREATE TABLE IF NOT EXISTS stops (
@@ -87,6 +88,8 @@ class Proposal:
     broker_order_id: str | None
     broker_response: dict[str, Any] | None
     error: str | None
+    #: Set on a swing buy: the desk sells it after this many trading days.
+    max_hold_days: int | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Proposal":
@@ -110,6 +113,9 @@ class ProposalStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as conn, conn:
             conn.executescript(_SCHEMA)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(proposals)")}
+            if "max_hold_days" not in columns:  # a journal from before swing trades
+                conn.execute("ALTER TABLE proposals ADD COLUMN max_hold_days INTEGER")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10)

@@ -91,6 +91,26 @@ class ExitSettings:
 
 
 @dataclass(frozen=True)
+class SwingSettings:
+    """Short trades with a fixed exit plan: a stop, a target and a sell-by day."""
+
+    min_hold_days: int = 2
+    max_hold_days: int = 10
+    #: The target must be at least this many times the distance to the stop.
+    min_reward_risk: float = 1.5
+    #: Sell at market, without asking, once the price reaches the target in market hours.
+    auto_target: bool = True
+    #: Sell at market, without asking, near the close of the last day.
+    auto_time_exit: bool = True
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.min_hold_days <= self.max_hold_days:
+            raise ValueError("swing.min_hold_days must be at least 1 and at most swing.max_hold_days")
+        if self.min_reward_risk < 0:
+            raise ValueError("swing.min_reward_risk must be 0 or more")
+
+
+@dataclass(frozen=True)
 class WebSettings:
     host: str = "127.0.0.1"
     port: int = 8765
@@ -120,6 +140,7 @@ class Settings:
     risk: RiskLimits = field(default_factory=RiskLimits)
     proposals: ProposalSettings = field(default_factory=ProposalSettings)
     exits: ExitSettings = field(default_factory=ExitSettings)
+    swing: SwingSettings = field(default_factory=SwingSettings)
     web: WebSettings = field(default_factory=WebSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     schedule: ScheduleSettings = field(default_factory=ScheduleSettings)
@@ -130,6 +151,7 @@ _SECTIONS = {
     "risk": RiskLimits,
     "proposals": ProposalSettings,
     "exits": ExitSettings,
+    "swing": SwingSettings,
     "web": WebSettings,
     "telegram": TelegramSettings,
     "schedule": ScheduleSettings,
