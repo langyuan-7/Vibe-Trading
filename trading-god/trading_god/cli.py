@@ -25,7 +25,7 @@ def _desk():
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
-    from trading_god.desk import watch_stops
+    from trading_god.desk import watch_exits
     from trading_god.web import create_app
 
     desk = _desk()
@@ -35,9 +35,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 2
     print(f"Trading God desk: http://{host}:{port}  (Ctrl+C to stop)")
     stop = threading.Event()
-    if desk.settings.exits.auto_stop:
-        print("Stop-losses: sold automatically at market when hit during market hours.")
-        threading.Thread(target=watch_stops, args=(desk, stop), name="stop-watch", daemon=True).start()
+    exits, swing = desk.settings.exits, desk.settings.swing
+    if exits.auto_stop or swing.auto_target or swing.auto_time_exit:
+        print("Exit plans: stops (and swing targets and last days) are sold at market during market hours.")
+        threading.Thread(target=watch_exits, args=(desk, stop), name="exit-watch", daemon=True).start()
     try:
         uvicorn.run(create_app(desk), host=host, port=port, log_level="warning")
     finally:
@@ -135,15 +136,23 @@ def cmd_prompt(args: argparse.Namespace) -> int:
 
 
 def cmd_skills(args: argparse.Namespace) -> int:
-    from trading_god.setup_vibe import install_own_skills, refresh_desk_tools, vibe_home
+    from trading_god.setup_vibe import install_missing_playbooks, install_own_skills, refresh_desk_tools, vibe_home
 
+    user_skills = vibe_home() / "skills" / "user"
     try:
-        installed = install_own_skills(vibe_home() / "skills" / "user")
+        installed = install_own_skills(user_skills)
         tools_changed = refresh_desk_tools(vibe_home() / "agent.json")
     except (RuntimeError, OSError, ValueError) as exc:
         print(f"Could not refresh the skills: {exc}", file=sys.stderr)
         return 1
     print(f"Refreshed {', '.join(installed)}." + (" Updated the agent's desk tools." if tools_changed else ""))
+    try:
+        added = install_missing_playbooks(user_skills)
+    except (RuntimeError, OSError, ValueError) as exc:
+        print(f"Could not add the new playbooks (the agent works without them): {exc}", file=sys.stderr)
+        return 1
+    if added:
+        print(f"Added playbooks: {', '.join(added)}.")
     return 0
 
 

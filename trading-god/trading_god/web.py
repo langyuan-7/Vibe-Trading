@@ -132,6 +132,17 @@ def _risk_line(p: st.Proposal) -> str:
     return f"Loss if stopped out: <b>{_money(loss)}</b> ({100.0 * (entry - p.stop_loss) / entry:.1f}% below entry)"
 
 
+def _swing_line(p: st.Proposal) -> str:
+    """A swing buy's exits happen without asking again, so the card says so plainly."""
+    if p.side != "buy" or not p.max_hold_days:
+        return ""
+    target = f"at the {_money(p.take_profit)} target, " if p.take_profit else ""
+    return (
+        '<div class="risk">Approving this also approves its exits: the desk sells by itself at the stop, '
+        f"{escape(target)}or near the close of trading day {p.max_hold_days} after the buy.</div>"
+    )
+
+
 def _pending_card(p: st.Proposal, token: str) -> str:
     extras = [f"Playbook: {escape(p.playbook)}"]
     if p.stop_loss:
@@ -140,6 +151,8 @@ def _pending_card(p: st.Proposal, token: str) -> str:
         extras.append(f"Target {_money(p.take_profit)}")
     if p.horizon:
         extras.append(f"Horizon: {escape(p.horizon)}")
+    if p.max_hold_days:
+        extras.append(f"Swing: at most {p.max_hold_days} trading days")
     if p.confidence:
         extras.append(f"Confidence: {escape(p.confidence)}")
     return f"""
@@ -148,6 +161,7 @@ def _pending_card(p: st.Proposal, token: str) -> str:
   <div class="meta">Proposed {_when(p.created_at)} &middot; expires {_when(p.expires_at)} &middot; last price when proposed {_money(p.ref_price)}</div>
   <div class="meta">{" &middot; ".join(extras)}</div>
   {f'<div class="risk">{_risk_line(p)}</div>' if _risk_line(p) else ""}
+  {_swing_line(p)}
   <div class="thesis">{escape(p.thesis)}</div>
   {_checks_html(p.risk_report)}
   <form method="post">
@@ -184,6 +198,9 @@ def _portfolio_html(portfolio: dict[str, Any]) -> str:
             stop += f' <small title="{escape(reason)}">trailing</small>'
         elif reason.startswith("raised"):
             stop += f' <small title="{escape(reason)}">raised</small>'
+        if p.get("sell_by"):
+            target = f"target {_money(p['target'])}, " if p.get("target") else ""
+            stop += f"<br><small>swing: {escape(target)}sell by {escape(p['sell_by'])}</small>"
         row_html.append(
             f"<tr><td>{escape(p['symbol'])}</td><td>{escape(p['name'])}</td><td>{p['quantity']:g}</td>"
             f"<td>{_money(p['market_value'])}</td><td>{(p['weight_pct'] or 0):.1f}%</td><td>{pl}</td>"

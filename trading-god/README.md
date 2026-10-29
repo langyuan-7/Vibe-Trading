@@ -49,6 +49,12 @@ Vibe-Trading's loaders supply the data, and
   fill below the stop. The desk page and Telegram tell you when it happens, and
   `[exits] auto_stop = false` in `desk.toml` turns it off. The PC has to be awake with
   Trading God running: the stop is not an order waiting at moomoo.
+- **Swing trades carry their exits.** A swing buy (2 to 10 trading days, from the
+  `darvas-box` or `livermore` playbook) must come with a stop, a target at least 1.5
+  times as far as the stop, and a number of days. The card says that approving it
+  approves those exits, and the desk then sells at whichever comes first: the stop, the
+  target, or 15:45 New York on the last day. `[swing]` in `desk.toml` sets the limits
+  and turns the automatic target and time exits off.
 - **Stops only go up.** For Minervini and O'Neil buys, the desk trails the stop once a
   day at the highest close since the buy minus 3 average daily ranges (ATR), so a calm
   stock trails close and a jumpy one gets room. The agent can also raise a stop to a

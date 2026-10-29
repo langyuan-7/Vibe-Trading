@@ -5,9 +5,11 @@ Only a person, through the desk page or the ``tg-desk`` command, can approve a
 proposal, and approval re-runs every risk check against fresh account state
 before the order is sent to the paper account.
 
-One sell needs no approval: when a position's price falls to the stop of the buy
-a person approved, the desk sells it at market during market hours
-(``[exits] auto_stop``), because a stop that waits for someone is no stop.
+Exits a person already approved need no second approval: when a position's price
+falls to the stop of the buy, the desk sells it at market during market hours
+(``[exits] auto_stop``), because a stop that waits for someone is no stop. A swing
+buy also carries a target and a last day, and the desk sells at those too
+(``[swing] auto_target`` and ``auto_time_exit``).
 Stops only ever move up: the desk trails them behind the highest close, and the
 agent may raise one to a level its playbook names.
 """
@@ -35,6 +37,8 @@ from trading_god.risk import (
     check_earnings,
     check_exit_plan,
     evaluate,
+    add_trading_days,
+    check_swing_plan,
     normalize_symbol,
     trailing_stop,
 )
@@ -46,8 +50,14 @@ Notifier = Callable[[str], None]
 _MAX_THESIS = 4000
 _MIN_THESIS = 30
 
-#: The playbook of a sell the desk placed itself because a stop was hit.
+#: The playbooks of sells the desk placed itself, following the exit plan of a buy.
 AUTO_STOP = "auto-stop"
+AUTO_TARGET = "auto-target"
+AUTO_TIME = "auto-time"
+AUTO_EXITS = (AUTO_STOP, AUTO_TARGET, AUTO_TIME)
+_AUTO_LABELS = {AUTO_STOP: "STOP HIT", AUTO_TARGET: "TARGET HIT", AUTO_TIME: "TIME LIMIT"}
+#: A swing trade's last day ends in a sell from this time, New York.
+_TIME_EXIT_AT = time(15, 45)
 #: The agent may not raise a stop closer than this to the last price.
 _MIN_STOP_ROOM_PCT = 2.0
 
@@ -131,6 +141,16 @@ def _whole_shares(value: Any) -> int:
     return int(number)
 
 
+def _whole_days(value: Any) -> int:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_hold_days must be a whole number of trading days") from exc
+    if not number.is_integer():
+        raise ValueError("max_hold_days must be a whole number of trading days")
+    return int(number)
+
+
 def order_fields(proposal: st.Proposal) -> dict[str, Any]:
     """The order as numbers, so the agent can quote them exactly.
 
@@ -145,6 +165,7 @@ def order_fields(proposal: st.Proposal) -> dict[str, Any]:
         "limit_price": proposal.limit_price,
         "stop_loss": proposal.stop_loss,
         "take_profit": proposal.take_profit,
+        "max_hold_days": proposal.max_hold_days,
         "notional": round(proposal.notional, 2) if proposal.notional else proposal.notional,
     }
 
@@ -208,6 +229,7 @@ class Desk:
         take_profit: float | None,
         include_pending: bool,
         exclude_id: int | None = None,
+        max_hold_days: int | None = None,
     ) -> RiskReport:
         price = self.prices(order.symbol)
         report = evaluate(
@@ -219,6 +241,17 @@ class Desk:
         )
         entry = order.limit_price if order.order_type == "limit" and order.limit_price else price
         plan = check_exit_plan(order.side, entry, stop_loss, take_profit)
+        swing = self.settings.swing
+        plan += check_swing_plan(
+            order.side,
+            entry,
+            stop_loss,
+            take_profit,
+            max_hold_days,
+            min_days=swing.min_hold_days,
+            max_days=swing.max_hold_days,
+            min_reward_risk=swing.min_reward_risk,
+        )
         plan += self._earnings_check(order, now)
         return RiskReport(report.checks + tuple(plan), report.price, report.notional)
 
@@ -290,10 +323,21 @@ class Desk:
                     "stop_reason": stops[p.symbol][2] if p.symbol in stops else None,
                     "initial_stop": stops[p.symbol][0].stop_loss if p.symbol in stops else None,
                     "stop_from_proposal": stops[p.symbol][0].id if p.symbol in stops else None,
+                    "target": stops[p.symbol][0].take_profit if p.symbol in stops else None,
+                    "sell_by": self._sell_by(stops[p.symbol][0]).isoformat()
+                    if p.symbol in stops and stops[p.symbol][0].max_hold_days
+                    else None,
                 }
                 for p in account.positions
             ],
             "auto_stop": self.settings.exits.auto_stop,
+            "swing": {
+                "min_hold_days": self.settings.swing.min_hold_days,
+                "max_hold_days": self.settings.swing.max_hold_days,
+                "min_reward_risk": self.settings.swing.min_reward_risk,
+                "auto_target": self.settings.swing.auto_target,
+                "auto_time_exit": self.settings.swing.auto_time_exit,
+            },
             "limits": {
                 "max_order_usd": round(equity * limits.max_order_pct / 100.0, 2),
                 "max_position_usd": round(equity * limits.max_position_pct / 100.0, 2),
@@ -326,8 +370,13 @@ class Desk:
         take_profit: Any = None,
         horizon: str = "",
         confidence: str = "",
+        max_hold_days: Any = None,
     ) -> dict[str, Any]:
-        """Check a proposed order and queue it for a person, or explain why not."""
+        """Check a proposed order and queue it for a person, or explain why not.
+
+        ``max_hold_days`` makes a buy a swing trade, which the desk sells by itself at its
+        stop, at its target or on its last day.
+        """
         now = self.clock()
         self.expire_stale()
         thesis = str(thesis or "").strip()
@@ -346,6 +395,9 @@ class Desk:
             )
             stop = _optional_float(stop_loss, "stop_loss")
             target = _optional_float(take_profit, "take_profit")
+            hold = None if max_hold_days in (None, "", 0) else _whole_days(max_hold_days)
+            if hold is not None and order.side != "buy":
+                raise ValueError("max_hold_days is for swing buys; a sell has no holding period")
         except ValueError as exc:
             return {"status": "invalid", "error": str(exc)}
 
@@ -354,7 +406,9 @@ class Desk:
         except BrokerError as exc:
             return {"status": "error", "error": str(exc)}
 
-        report = self._report(order, account, now, stop_loss=stop, take_profit=target, include_pending=True)
+        report = self._report(
+            order, account, now, stop_loss=stop, take_profit=target, include_pending=True, max_hold_days=hold
+        )
         waiting = next((p for p in self.store.list([st.PENDING], limit=100) if p.symbol == order.symbol), None)
         if waiting is not None:
             clash = Check(
@@ -384,6 +438,7 @@ class Desk:
             confidence=str(confidence or "")[:100],
             risk_report=report.to_dict(),
             decision_note="" if report.passed else "refused by risk checks",
+            max_hold_days=hold,
         )
         if not report.passed:
             return {
@@ -490,6 +545,7 @@ class Desk:
             take_profit=proposal.take_profit,
             include_pending=False,
             exclude_id=proposal.id,
+            max_hold_days=proposal.max_hold_days,
         )
         if not report.passed:
             problems = [f"{c.name}: {c.detail}" for c in report.failures()]
@@ -534,36 +590,58 @@ class Desk:
                 stops[p.symbol] = p
         return stops
 
-    def check_stops(self) -> list[dict[str, Any]]:
-        """Sell, at market, every position whose price is at or below its stop.
+    def check_exits(self) -> list[dict[str, Any]]:
+        """Sell, at market, every position whose approved exit plan says so.
 
-        Runs only in regular market hours. Shares already in an open sell order are
-        not sellable, so a sell that is still working is not sent twice.
+        That is the stop for every buy, and for a swing buy also its target and its
+        last day (after 15:45 New York). Runs only in regular market hours. Shares
+        already in an open sell order are not sellable, so a working sell is not sent twice.
         """
-        exits = self.settings.exits
+        exits, swing = self.settings.exits, self.settings.swing
         now = self.clock()
-        if not exits.auto_stop or not us_session_open(now):
+        if not (exits.auto_stop or swing.auto_target or swing.auto_time_exit) or not us_session_open(now):
             return []
-        stops = self._stops()
-        if not stops:
+        buys = self._stops()
+        if not buys:
             return []
         account = self.broker.account()
         since = iso(now - timedelta(minutes=exits.retry_minutes))
         recent = {
-            p.symbol for p in self.store.list(None, limit=200) if p.playbook == AUTO_STOP and p.created_at >= since
+            p.symbol for p in self.store.list(None, limit=200) if p.playbook in AUTO_EXITS and p.created_at >= since
         }
+        today = us_date(now)
+        closing_time = now.astimezone(ZoneInfo("America/New_York")).time() >= _TIME_EXIT_AT
         results = []
         for position in account.positions:
-            buy = stops.get(position.symbol)
+            buy = buys.get(position.symbol)
             quantity = int(position.sellable)
             if buy is None or quantity <= 0 or position.symbol in recent:
                 continue
             stop, reason = self._stop_of(buy, now)
             price = self.prices(position.symbol)
-            if price is None or price > stop:
+            if price is None:
                 continue
-            results.append(self._stop_out(buy, stop, reason, quantity, price, account, now))
+            exit_plan = None
+            if exits.auto_stop and price <= stop:
+                exit_plan = (
+                    AUTO_STOP,
+                    f"last price ${price:,.2f} is at or below the ${stop:,.2f} stop of #{buy.id} ({reason})",
+                )
+            elif buy.max_hold_days and swing.auto_target and buy.take_profit and price >= buy.take_profit:
+                exit_plan = (
+                    AUTO_TARGET,
+                    f"last price ${price:,.2f} reached the ${buy.take_profit:,.2f} target of #{buy.id}",
+                )
+            elif buy.max_hold_days and swing.auto_time_exit and closing_time and today >= self._sell_by(buy):
+                exit_plan = (AUTO_TIME, f"#{buy.id} reached its {buy.max_hold_days}-trading-day limit")
+            if exit_plan:
+                results.append(self._auto_sell(buy, *exit_plan, quantity, price, account, now))
         return results
+
+    def _sell_by(self, buy: st.Proposal) -> date:
+        """A swing buy's last day: ``max_hold_days`` trading days after it was placed."""
+        placed = us_date(datetime.fromisoformat(buy.decided_at or buy.created_at))
+        return add_trading_days(placed, int(buy.max_hold_days or 0))
 
     def _stop_of(self, buy: st.Proposal, now: datetime) -> tuple[float, str]:
         """A placed buy's stop now, and where it came from. It never sits below the approved one."""
@@ -640,26 +718,26 @@ class Desk:
         self.store.raise_stop(buy.id, new, f"raised by agent: {reason[:300]}", iso(now))
         return {"status": "ok", "symbol": code, "stop_loss": new, "previous_stop": current, "last_price": price}
 
-    def _stop_out(
+    def _auto_sell(
         self,
         buy: st.Proposal,
-        stop: float,
-        reason: str,
+        kind: str,
+        why: str,
         quantity: int,
         price: float,
         account: Account,
         now: datetime,
     ) -> dict[str, Any]:
+        label = _AUTO_LABELS[kind]
         for waiting in self.store.list([st.PENDING], limit=100):
             if waiting.symbol == buy.symbol:
                 self.store.decide(
-                    waiting.id, st.WITHDRAWN, iso(now), "withdrawn: the stop was hit and the desk sold the position"
+                    waiting.id, st.WITHDRAWN, iso(now), f"withdrawn: the desk sold the position ({label.lower()})"
                 )
         order = OrderRequest(symbol=buy.symbol, side="sell", quantity=quantity, order_type="market")
-        # A stop exits at market whatever desk.toml says about market buys.
+        # An approved exit goes out at market whatever desk.toml says about market buys.
         limits = replace(self.settings.risk, allow_market_orders=True)
         report = evaluate(order, price, self._state(account, now, include_pending=False), limits, include_pending=False)
-        why = f"last price ${price:,.2f} is at or below the ${stop:,.2f} stop of #{buy.id} ({reason})"
         proposal = self.store.add(
             created_at=iso(now),
             expires_at=iso(now + timedelta(hours=1)),
@@ -670,20 +748,25 @@ class Desk:
             order_type=order.order_type,
             ref_price=report.price,
             notional=report.notional,
-            thesis=f"Automatic stop-loss sell: {why}.",
-            playbook=AUTO_STOP,
+            thesis=f"Automatic sell ({label.lower()}): {why}, as approved with the buy.",
+            playbook=kind,
             risk_report=report.to_dict(),
         )
-        if not self.store.claim(proposal.id, iso(now), f"automatic stop-loss: {why}"):
-            return {"status": "unchanged", "proposal_id": proposal.id, "symbol": order.symbol}
-        result: dict[str, Any] = {"proposal_id": proposal.id, "symbol": order.symbol, "quantity": quantity}
+        if not self.store.claim(proposal.id, iso(now), f"automatic {label.lower()}: {why}"):
+            return {"status": "unchanged", "proposal_id": proposal.id, "symbol": order.symbol, "kind": kind}
+        result: dict[str, Any] = {
+            "proposal_id": proposal.id,
+            "symbol": order.symbol,
+            "quantity": quantity,
+            "kind": kind,
+        }
         if not report.passed:
             problems = "; ".join(f"{c.name}: {c.detail}" for c in report.failures())
             self.store.finish(proposal.id, st.BLOCKED, error=problems)
             result.update(status=st.BLOCKED, error=problems)
         else:
             try:
-                placed = self.broker.place_order(order, remark=f"trading-god #{proposal.id} stop")
+                placed = self.broker.place_order(order, remark=f"trading-god #{proposal.id} {kind}")
             except Exception as exc:  # noqa: BLE001 - recorded, retried after exits.retry_minutes
                 self.store.finish(proposal.id, st.FAILED, error=str(exc))
                 result.update(status=st.FAILED, error=str(exc))
@@ -692,27 +775,27 @@ class Desk:
                 result.update(status=st.PLACED, order_id=placed["order_id"])
         if result["status"] == st.PLACED:
             self._notify(
-                f"Trading God (paper) STOP HIT: sold {quantity} {order.symbol} at market, {why}. "
+                f"Trading God (paper) {label}: sold {quantity} {order.symbol} at market, {why}. "
                 f"No approval was needed. #{proposal.id}"
             )
         else:
             self._notify(
-                f"Trading God (paper) STOP HIT on {order.symbol}, but the sell did not go through: "
+                f"Trading God (paper) {label} on {order.symbol}, but the sell did not go through: "
                 f"{result['error']}. Sell it in moomoo. #{proposal.id}"
             )
         return result
 
 
-def watch_stops(desk: Desk, stop: threading.Event, report: Callable[[str], None] = print) -> None:
-    """Check stops every ``exits.check_seconds`` until ``stop`` is set."""
+def watch_exits(desk: Desk, stop: threading.Event, report: Callable[[str], None] = print) -> None:
+    """Check exit plans every ``exits.check_seconds`` until ``stop`` is set."""
     while not stop.wait(desk.settings.exits.check_seconds):
         try:
-            for result in desk.check_stops():
+            for result in desk.check_exits():
                 report(
-                    f"{iso(desk.clock())} stop-loss {result.get('symbol')}: {result.get('status')} "
+                    f"{iso(desk.clock())} {result.get('kind')} {result.get('symbol')}: {result.get('status')} "
                     f"#{result.get('proposal_id')} {result.get('error', '')}".rstrip()
                 )
         except BrokerError as exc:
-            logger.info("stop check skipped: %s", exc)
+            logger.info("exit check skipped: %s", exc)
         except Exception:  # noqa: BLE001 - the watcher must outlive one bad check
-            logger.exception("stop check failed")
+            logger.exception("exit check failed")

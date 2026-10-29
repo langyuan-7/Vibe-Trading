@@ -179,6 +179,57 @@ def check_earnings(side: str, today: date, earnings: date | None, blackout_days:
     return [Check("earnings", True, when)]
 
 
+def add_trading_days(day: date, count: int) -> date:
+    """The weekday ``count`` trading days after ``day``; exchange holidays are not known."""
+    while count > 0:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            count -= 1
+    return day
+
+
+def check_swing_plan(
+    side: str,
+    entry: float | None,
+    stop_loss: float | None,
+    take_profit: float | None,
+    max_hold_days: int | None,
+    *,
+    min_days: int,
+    max_days: int,
+    min_reward_risk: float,
+) -> list[Check]:
+    """A swing buy (one with ``max_hold_days``) needs its whole exit plan up front.
+
+    The desk sells it by itself at the stop, at the target or on the last day, so
+    the person approves all three with the buy.
+    """
+    if side != "buy" or max_hold_days is None:
+        return []
+    checks = [
+        Check(
+            "swing_days",
+            min_days <= max_hold_days <= max_days,
+            f"held at most {max_hold_days} trading days"
+            if min_days <= max_hold_days <= max_days
+            else f"max_hold_days must be {min_days} to {max_days} for a swing trade, got {max_hold_days}",
+        )
+    ]
+    if take_profit is None:
+        checks.append(Check("swing_target", False, "a swing trade needs a take_profit target"))
+    elif entry and stop_loss and entry > stop_loss and take_profit > entry:
+        ratio = (take_profit - entry) / (entry - stop_loss)
+        checks.append(
+            Check(
+                "reward_risk",
+                ratio >= min_reward_risk,
+                f"target is {ratio:.1f} times the risk to the stop"
+                + ("" if ratio >= min_reward_risk else f" (needs {min_reward_risk:g})"),
+            )
+        )
+    return checks
+
+
 def check_exit_plan(side: str, entry: float | None, stop_loss: float | None, take_profit: float | None) -> list[Check]:
     """Every buy must say where it is wrong (a stop below entry) before it is sized.
 
